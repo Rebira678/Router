@@ -30,7 +30,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	const (
-		mockAddr  = ":9090"
+		mockAddr  = ":9091"
 		proxyAddr = ":8080"
 	)
 
@@ -52,7 +52,7 @@ func main() {
 	proxyHandler := proxy.New(proxy.Target{
 		Name:    "mock-primary",
 		BaseURL: upstreamURL,
-	})
+	}, 5*time.Second) // Day 3: hard 5s ceiling on waiting for the upstream
 
 	// Day 2: wrap the proxy in a bounded worker pool instead of letting
 	// every accepted connection call upstream directly. 20 workers is an
