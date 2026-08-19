@@ -102,10 +102,29 @@ func (p *Pool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// growth we set out to avoid, just moved one level up.
 	select {
 	case p.jobs <- j:
-		// Accepted into the queue. Block here — not busy-wait, this
-		// goroutine is parked by the Go runtime at zero CPU cost —
-		// until the worker that picks up j closes done.
-		<-j.done
+		// Accepted into the queue. Wait for the worker to finish —
+		// but watch r.Context().Done() too (Day 3), not just j.done.
+		// Without this, a client that disconnects while still queued
+		// (waiting for a free worker) would leave this goroutine
+		// blocked until a worker eventually gets to it anyway — wasted
+		// work for a response nobody is listening for.
+		//
+		// Important nuance: canceling here does NOT stop the worker.
+		// The job is already sitting in p.jobs; once a worker dequeues
+		// it, p.next.ServeHTTP(j.w, j.r) still runs — and inside that
+		// call, proxy.go's own context handling (Step 2/3 above) is
+		// what will actually notice r.Context() is canceled and abort
+		// the upstream call. This select only stops THIS goroutine
+		// from pointlessly waiting around for a result it can no
+		// longer deliver anywhere. That's the honest limit of
+		// cancellation in Go: it's cooperative, propagated by
+		// convention, not a forceful kill switch.
+		select {
+		case <-j.done:
+		case <-r.Context().Done():
+			slog.Info("workerpool: client disconnected while request was queued/in-flight",
+				"path", r.URL.Path)
+		}
 	default:
 		slog.Warn("workerpool: queue full, rejecting request",
 			"path", r.URL.Path,
