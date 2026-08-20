@@ -247,12 +247,24 @@ func (h *Handler) buildUpstreamRequest(ctx context.Context, r *http.Request) (*h
 // writeDownstreamResponse mirrors the upstream response back to the client:
 // status line, headers (minus hop-by-hop), then body.
 //
-// The body copy uses io.Copy, which streams via a fixed-size internal
-// buffer rather than reading the whole response into memory first. For a
-// small JSON completion this distinction is invisible; for a streamed
-// SSE response (Day 4) or a large document (Retriever, Week 5) it is the
-// difference between O(1) and O(response size) memory per in-flight
-// request.
+// Day 4 splits the body-copy strategy in two, based on the upstream's
+// Content-Type:
+//
+//   - Ordinary responses: io.Copy, unchanged since Day 1. It streams via
+//     a fixed-size internal buffer rather than reading the whole body
+//     into memory, which is already correct — the data reaches the
+//     client progressively at the TCP level. What io.Copy does NOT do is
+//     call Flush between reads, and for a fast, small JSON response
+//     that's invisible: the whole thing is written and the handler
+//     returns before buffering would even matter.
+//
+//   - text/event-stream responses: a hand-written loop that calls
+//     Flush() after every single write. For SSE this distinction is the
+//     entire feature — without an explicit Flush, Go's ResponseWriter is
+//     free to hold written-but-unflushed bytes until either its internal
+//     buffer fills or the handler returns, which for a slow, token-by-
+//     token upstream would mean the client sees nothing for seconds,
+//     then everything at once. That defeats the reason SSE exists.
 func (h *Handler) writeDownstreamResponse(w http.ResponseWriter, upstreamResp *http.Response) {
 	destHeader := w.Header()
 	for k, values := range upstreamResp.Header {
@@ -262,13 +274,87 @@ func (h *Handler) writeDownstreamResponse(w http.ResponseWriter, upstreamResp *h
 	}
 	removeHopByHopHeaders(destHeader)
 
+	isEventStream := strings.HasPrefix(
+		strings.ToLower(upstreamResp.Header.Get("Content-Type")),
+		"text/event-stream",
+	)
+
+	if isEventStream {
+		// A streaming body's true length is unknowable in advance —
+		// if the upstream nonetheless sent a Content-Length (it
+		// shouldn't, but "shouldn't" isn't a guarantee), forwarding
+		// it verbatim would tell the client to expect exactly that
+		// many bytes. Since we're about to stream an indeterminate
+		// number of chunks instead, a stale Content-Length would
+		// make well-behaved HTTP clients either truncate the stream
+		// early or hang waiting for bytes that are never coming.
+		// Deleting it lets Go's server fall back to chunked transfer
+		// encoding, which is what a length-unknown-in-advance stream
+		// is supposed to use.
+		destHeader.Del("Content-Length")
+	}
+
 	w.WriteHeader(upstreamResp.StatusCode)
+
+	if isEventStream {
+		h.streamSSE(w, upstreamResp.Body)
+		return
+	}
 
 	if _, err := io.Copy(w, upstreamResp.Body); err != nil {
 		// The client almost certainly disconnected mid-response.
 		// Nothing to send an error page for at this point — the
 		// headers are already written — so just log it.
 		slog.Warn("proxy: error streaming response body to client", "error", err)
+	}
+}
+
+// streamSSE relays an SSE body to the client one read at a time, flushing
+// after every write so each event reaches the client as soon as Router
+// receives it — not batched, not delayed.
+//
+// A quiet but important detail: io.Reader.Read does NOT block until its
+// buffer is full. Per the io.Reader contract, Read returns as soon as
+// *some* data is available, even if that's fewer bytes than len(buf). So
+// this loop's 512-byte buffer is a ceiling on how much we read per
+// iteration, not a batching delay we're imposing — the real granularity
+// of "how much arrives per iteration" is set by how the upstream flushed
+// its own writes onto the TCP connection. Since mockllm flushes after
+// every single token, each Read call here will typically return exactly
+// one token's worth of JSON, not eleven of them merged together.
+func (h *Handler) streamSSE(w http.ResponseWriter, body io.Reader) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// No Flusher support on this connection for some reason —
+		// fall back to a plain copy. The response will still
+		// eventually arrive complete and correct, just not
+		// incrementally. Better than failing the request outright.
+		slog.Warn("proxy: ResponseWriter does not support Flusher; SSE response will not stream incrementally")
+		_, _ = io.Copy(w, body)
+		return
+	}
+
+	buf := make([]byte, 512)
+	for {
+		n, readErr := body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				// Client disconnected mid-stream — completely
+				// normal for SSE (a user closing a chat tab
+				// mid-response, for instance). Nothing more to
+				// do; the deferred upstreamResp.Body.Close() in
+				// ServeHTTP will release the upstream connection.
+				slog.Info("proxy: client disconnected mid-stream", "error", writeErr)
+				return
+			}
+			flusher.Flush()
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				slog.Warn("proxy: error reading SSE body from upstream", "error", readErr)
+			}
+			return // io.EOF is the normal, successful end of stream
+		}
 	}
 }
 
