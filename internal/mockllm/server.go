@@ -106,6 +106,103 @@ func NewServer(addr string, name string, artificialDelay time.Duration) *http.Se
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	// Day 4: a genuine streaming endpoint, separate from the JSON one
+	// above. Real providers (OpenAI, Anthropic) use the *same* URL for
+	// both and switch behavior based on a `"stream": true` field inside
+	// the JSON request body — but Router's proxy never parses request
+	// bodies (Day 1's whole design point: it operates one layer below
+	// the application, forwarding bytes it doesn't need to understand).
+	// A separate path here keeps mockllm simple without requiring the
+	// proxy to inspect bodies to decide how to behave — which is the
+	// architecturally correct place to draw that line anyway: streaming
+	// vs. non-streaming is a *response* framing decision, and the proxy
+	// makes it by looking at the upstream's Content-Type, not by
+	// parsing what the client asked for.
+	mux.HandleFunc("/v1/chat/completions/stream", func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("mockllm: received streaming request",
+			"upstream", name,
+			"x_forwarded_for", r.Header.Get("X-Forwarded-For"),
+		)
+
+		// http.Flusher is the interface that exposes "push whatever
+		// I've written so far onto the wire right now." Go's stdlib
+		// http.response type implements it for HTTP/1.1 and HTTP/2
+		// connections; it's worth checking rather than assuming,
+		// since some ResponseWriter wrappers (rare, but they exist)
+		// don't forward it.
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported by this connection", http.StatusInternalServerError)
+			return
+		}
+
+		// text/event-stream is the SSE content type — this alone is
+		// what tells a browser's EventSource API (or, in our case,
+		// Router's proxy) "treat this response as an ongoing stream
+		// of events, not a single body to wait for in full."
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		// Connection is hop-by-hop and will be stripped by Router
+		// before relaying to its own client anyway (Day 1's
+		// removeHopByHopHeaders) — set here mainly for correctness
+		// when testing mockllm directly, bypassing Router entirely.
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Mock-Upstream", name)
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush() // push headers immediately, before the first token exists
+
+		tokens := []string{
+			"This ", "is ", "a ", "token-by-token ", "streamed ",
+			"response ", "from ", "the ", "mock ", "LLM ", "upstream.",
+		}
+		id := fmt.Sprintf("mockcmpl-%d", time.Now().UnixNano())
+
+		for _, tok := range tokens {
+			// Check for client cancellation between tokens — same
+			// discipline as the delay-simulation code above.
+			select {
+			case <-r.Context().Done():
+				slog.Info("mockllm: stream aborted by caller", "upstream", name)
+				return
+			default:
+			}
+
+			chunk := map[string]any{
+				"id":    id,
+				"model": "mock-llm-v1",
+				"choices": []map[string]any{
+					{"index": 0, "delta": map[string]string{"content": tok}},
+				},
+			}
+			b, err := json.Marshal(chunk)
+			if err != nil {
+				slog.Error("mockllm: failed to marshal SSE chunk", "error", err)
+				return
+			}
+
+			// The SSE wire format: "data: <payload>\n\n" — the
+			// blank line (a second \n) is what marks the end of
+			// one event. Get this wrong (single \n) and clients
+			// following the spec won't recognize the event
+			// boundary at all.
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush() // <-- the whole lesson of Day 4, right here
+
+			// Simulate real per-token generation latency. Without
+			// this, all 11 tokens would be produced and flushed
+			// within microseconds of each other — technically
+			// still "streaming" but not a convincing demo of
+			// why streaming matters for perceived latency.
+			time.Sleep(150 * time.Millisecond)
+		}
+
+		// OpenAI-style convention: a literal "[DONE]" sentinel event
+		// signals the stream is finished, distinct from the
+		// connection simply closing (which could also mean an error).
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	})
+
 	return &http.Server{
 		Addr:              addr,
 		Handler:           mux,
