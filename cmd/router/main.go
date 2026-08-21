@@ -22,6 +22,7 @@ import (
 
 	"github/rebik/internal/mockllm"
 	"github/rebik/internal/proxy"
+	"github/rebik/internal/ratelimit"
 	"github/rebik/internal/workerpool"
 )
 
@@ -30,7 +31,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	const (
-		mockAddr  = ":9091"
+		mockAddr  = ":9090"
 		proxyAddr = ":8080"
 	)
 
@@ -67,9 +68,21 @@ func main() {
 	)
 	boundedHandler := workerpool.New(proxyHandler, poolWorkers, poolQueueSize)
 
+	// Day 5: rate limiting sits OUTSIDE the worker pool, on purpose — a
+	// request that's over its own tenant's limit is rejected before it
+	// ever takes a queue slot that some other tenant could have used.
+	// capacity=10, refillRate=2 means: burst of 10 requests instantly
+	// per API key, then a sustained 2 requests/sec after that.
+	const (
+		rateLimitCapacity   = 10
+		rateLimitRefillRate = 2
+	)
+	limiter := ratelimit.NewLimiter(rateLimitCapacity, rateLimitRefillRate)
+	rateLimitedHandler := ratelimit.Middleware(boundedHandler, limiter, ratelimit.KeyFromAuthHeader)
+
 	proxySrv := &http.Server{
 		Addr:              proxyAddr,
-		Handler:           boundedHandler,
+		Handler:           rateLimitedHandler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
