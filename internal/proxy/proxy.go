@@ -27,7 +27,7 @@ import (
 // the request/response itself — RFC 7230 §6.1 (and the older RFC 2616
 // §13.5.1) name these explicitly. A proxy MUST strip them before forwarding
 // in either direction, because they belong to the client<->proxy
-// connection, not the proxy<->upstream one. Forwarding "Connection: close"
+// connection, not the proxy<->upstream one.Forwarding "Connection: close"
 // from the client, for example, would tell your upstream to tear down a
 // connection you (the proxy) still control and may want to keep pooled.
 //
