@@ -27,6 +27,9 @@ func KeyFromAuthHeader(r *http.Request) string {
 
 // Middleware wraps next with rate limiting: every request must get an
 // Allow() from the Limiter before it's allowed to reach next at all.
+// limiter is now the Limiter INTERFACE (not *Limiter — that name is gone,
+// it's an interface today), so this same middleware works unchanged
+// whether it's handed a MemoryLimiter or today's RedisLimiter.
 //
 // Where this sits in the handler chain is a real design decision, not an
 // afterthought: it belongs OUTSIDE the Day 2 worker pool, not inside it.
@@ -35,11 +38,34 @@ func KeyFromAuthHeader(r *http.Request) string {
 // its own limit could still crowd out other tenants' legitimate traffic
 // by filling the shared queue, which defeats half the point of having
 // per-tenant limits in the first place.
-func Middleware(next http.Handler, limiter *Limiter, keyFn KeyFunc) http.Handler {
+func Middleware(next http.Handler, limiter Limiter, keyFn KeyFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := keyFn(r)
 
-		if !limiter.Allow(key) {
+		allowed, err := limiter.Allow(r.Context(), key)
+		if err != nil {
+			// NEW today, and a real design decision worth being able to
+			// defend out loud: what should happen if Redis itself is
+			// unreachable? Two honest options exist —
+			//   FAIL CLOSED: reject every request until Redis recovers.
+			//     Safer for the rate limit's integrity, but now a Redis
+			//     outage takes down the entire gateway, not just rate
+			//     limiting — a dependency that was meant to protect
+			//     availability becomes the thing that removes it.
+			//   FAIL OPEN: let the request through anyway, log loudly.
+			//     Rate limiting is temporarily not enforced, but Router
+			//     itself stays up. Chosen here, because losing rate
+			//     limiting for a few minutes during a Redis blip is a
+			//     recoverable, boring problem — losing the whole gateway
+			//     because a side concern went down is not.
+			// This is genuinely debatable and depends on what you're
+			// protecting; naming the trade-off out loud is the point.
+			slog.Error("ratelimit: backend error, failing open", "error", err, "key", key)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !allowed {
 			slog.Warn("ratelimit: request rejected, bucket empty", "key", key, "path", r.URL.Path)
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "rate limit exceeded for this API key", http.StatusTooManyRequests)
