@@ -24,6 +24,8 @@ import (
 	"github/rebik/internal/proxy"
 	"github/rebik/internal/ratelimit"
 	"github/rebik/internal/workerpool"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -31,7 +33,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	const (
-		mockAddr  = ":9090"
+		mockAddr  = ":9091"
 		proxyAddr = ":8080"
 	)
 
@@ -68,16 +70,35 @@ func main() {
 	)
 	boundedHandler := workerpool.New(proxyHandler, poolWorkers, poolQueueSize)
 
-	// Day 5: rate limiting sits OUTSIDE the worker pool, on purpose — a
-	// request that's over its own tenant's limit is rejected before it
-	// ever takes a queue slot that some other tenant could have used.
-	// capacity=10, refillRate=2 means: burst of 10 requests instantly
-	// per API key, then a sustained 2 requests/sec after that.
+	// Day 6: rate limit state now lives in Redis instead of this
+	// process's own memory, so the limit holds correctly across
+	// multiple Router instances sharing the same Redis — not just
+	// within one process. redisAddr defaults to a local instance;
+	// override with the REDIS_ADDR env var for anything else.
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
+
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := redisClient.Ping(pingCtx).Err(); err != nil {
+		pingCancel()
+		slog.Error("router: cannot reach redis at startup",
+			"addr", redisAddr,
+			"error", err,
+			"hint", "start Redis locally, e.g. `docker run -d -p 6379:6379 redis:7-alpine`",
+		)
+		os.Exit(1)
+	}
+	pingCancel()
+	slog.Info("redis: connected", "addr", redisAddr)
+
 	const (
 		rateLimitCapacity   = 10
 		rateLimitRefillRate = 2
 	)
-	limiter := ratelimit.NewLimiter(rateLimitCapacity, rateLimitRefillRate)
+	limiter := ratelimit.NewRedisLimiter(redisClient, rateLimitCapacity, rateLimitRefillRate)
 	rateLimitedHandler := ratelimit.Middleware(boundedHandler, limiter, ratelimit.KeyFromAuthHeader)
 
 	proxySrv := &http.Server{
@@ -108,4 +129,5 @@ func main() {
 
 	_ = proxySrv.Shutdown(ctx)
 	_ = mockSrv.Shutdown(ctx)
+	_ = redisClient.Close()
 }
