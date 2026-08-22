@@ -1,55 +1,56 @@
 package ratelimit
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
-// Limiter owns one independent TokenBucket per identity string (in
-// practice, per API key) and creates a new one lazily the first time an
-// identity is ever seen — there's no separate "register this tenant"
-// step. This mirrors how real API gateways behave: a brand-new API key's
-// first request should just work, not 404 because nobody pre-provisioned
-// a bucket for it.
-type Limiter struct {
+// Limiter is the interface the middleware depends on — not a concrete
+// storage backend. Day 5's in-memory version and today's Redis version
+// both implement it, which is what lets main.go swap one for the other
+// by changing a single line, without touching middleware.go at all.
+//
+// Allow now takes a context.Context and can return an error — neither of
+// which the Day 5 signature needed. A plain in-memory map access can
+// never fail. A network call to Redis absolutely can (timeout, Redis
+// down, connection refused) — the interface has to account for the
+// backend that's harder to talk to, even though today's MemoryLimiter
+// still can't actually produce an error.
+type Limiter interface {
+	Allow(ctx context.Context, key string) (bool, error)
+}
+
+// MemoryLimiter is Day 5's implementation, renamed (was: Limiter) now that
+// "Limiter" is the interface name instead. Nothing about how it works
+// changed — only its name, and the shape of its Allow method so it
+// satisfies the new interface.
+type MemoryLimiter struct {
 	mu         sync.Mutex
 	buckets    map[string]*TokenBucket
 	capacity   float64
 	refillRate float64
 }
 
-// NewLimiter builds a Limiter where every tenant gets the same capacity
-// and refill rate. (Per-tenant custom limits — e.g. a paying customer
-// getting a bigger bucket than a free-tier one — are a natural extension
-// of this data model, but deliberately out of scope for Day 5: get one
-// limit working correctly before making it configurable per tenant.)
-func NewLimiter(capacity, refillRate float64) *Limiter {
-	return &Limiter{
+// NewMemoryLimiter builds an in-memory Limiter — kept around after Day 6
+// on purpose. It's still genuinely useful: local development and unit
+// tests shouldn't require a running Redis instance just to exercise
+// Router's rate-limiting logic.
+func NewMemoryLimiter(capacity, refillRate float64) *MemoryLimiter {
+	return &MemoryLimiter{
 		buckets:    make(map[string]*TokenBucket),
 		capacity:   capacity,
 		refillRate: refillRate,
 	}
 }
 
-// Allow reports whether the request identified by key may proceed. The
-// first call for any given key allocates that tenant's bucket; every
-// subsequent call for the same key reuses it.
-func (l *Limiter) Allow(key string) bool {
-	return l.getOrCreateBucket(key).Allow()
+// Allow satisfies the Limiter interface. ctx is accepted but unused here —
+// a map lookup can't be canceled or time out — it's part of the signature
+// purely so MemoryLimiter and RedisLimiter are interchangeable.
+func (l *MemoryLimiter) Allow(ctx context.Context, key string) (bool, error) {
+	return l.getOrCreateBucket(key).Allow(), nil
 }
 
-// getOrCreateBucket is the one place map access happens, so the map's own
-// mutex discipline lives in exactly one function. Note carefully what this
-// lock protects and what it does NOT protect: it guards the map (creating
-// entries safely under concurrent access from many goroutines — remember,
-// every request is its own goroutine), but it is released immediately
-// after fetching or creating the bucket pointer. The actual token
-// accounting happens inside TokenBucket.Allow(), under that bucket's OWN
-// separate mutex. That split matters: if this function held the Limiter's
-// lock for the whole Allow() call, every tenant in the system would
-// serialize behind a single global lock — exactly the kind of unnecessary
-// contention Day 2's worker pool was designed to avoid at a different
-// layer. Splitting the locks means tenant A and tenant B's requests can be
-// rate-limit-checked fully in parallel; they only briefly contend if they
-// happen to hit getOrCreateBucket at the exact same nanosecond.
-func (l *Limiter) getOrCreateBucket(key string) *TokenBucket {
+func (l *MemoryLimiter) getOrCreateBucket(key string) *TokenBucket {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
