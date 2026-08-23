@@ -53,8 +53,16 @@ func NewRedisLimiter(client *redis.Client, capacity, refillRate float64) *RedisL
 // keys is the simpler thing to reach for first, and it's what makes the
 // race condition below easy to see: it's two GETs and two SETs, not one.)
 func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
-	tokensKey := fmt.Sprintf("ratelimit:%s:tokens", key)
-	lastRefillKey := fmt.Sprintf("ratelimit:%s:last_refill_ns", key)
+	// Day 7 fix: hash the raw identity before it ever becomes part of a
+	// Redis key name. Without this, a real bearer token or API key would
+	// sit in plain text in every key name — visible to anyone running
+	// `redis-cli KEYS "*"`, watching Redis's slow log, or looking at a
+	// monitoring dashboard. The hash is deterministic (same tenant always
+	// produces the same fingerprint, so rate limiting still works
+	// correctly) but not reversible back to the original credential.
+	identity := hashIdentity(key)
+	tokensKey := fmt.Sprintf("ratelimit:%s:tokens", identity)
+	lastRefillKey := fmt.Sprintf("ratelimit:%s:last_refill_ns", identity)
 
 	// --- ROUND TRIP 1: read current state ---
 	tokens, err := l.readFloat(ctx, tokensKey, l.capacity)
@@ -91,9 +99,25 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
 	// for efficiency, but that is NOT the same thing as making the
 	// overall GET+GET+compute+SET+SET sequence atomic — it only saves a
 	// network hop, it does not add any locking.
+	//
+	// Day 7 fix: both keys now carry a TTL instead of living forever.
+	// The TTL isn't an arbitrary guess — it's set to a bit longer than
+	// however long it takes this bucket to refill from completely empty
+	// back to completely full (capacity / refillRate seconds), with a
+	// 2x safety margin. That choice means expiry can never change
+	// observable behavior: if a tenant has genuinely been silent longer
+	// than that, their bucket would already be back at full capacity
+	// anyway — so letting Redis delete the key and having the next
+	// request fall back to readFloat's default (a full bucket) produces
+	// the exact same result as if the key had never expired. Without
+	// this, every API key that's ever made one request — including
+	// abusive one-off scanning traffic — leaves two permanent entries in
+	// Redis forever, a slow, silent memory leak.
+	ttl := time.Duration(2 * l.capacity / l.refillRate * float64(time.Second))
+
 	pipe := l.client.Pipeline()
-	pipe.Set(ctx, tokensKey, tokens, 0)
-	pipe.Set(ctx, lastRefillKey, now.UnixNano(), 0)
+	pipe.Set(ctx, tokensKey, tokens, ttl)
+	pipe.Set(ctx, lastRefillKey, now.UnixNano(), ttl)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return false, fmt.Errorf("ratelimit: persisting bucket state: %w", err)
 	}
