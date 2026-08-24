@@ -77,27 +77,28 @@ Denied:       195
 ## LinkedIn Post
 
 **Draft:**
-I deliberately left a race condition in my AI inference gateway's rate limiter. Today, I built the benchmark to exploit it—and then fixed it.
+Day 8 & 9: Exposing and fixing a distributed race condition under load.
 
-Because my Go service originally read tokens from Redis and wrote them back as two separate network calls (GET then SET), there was a sub-millisecond gap. If multiple requests hit that gap simultaneously, they all read the same token count, and the limiter failed open. 
+Today, I tackled a subtle bug in my Go AI inference gateway. When I moved my rate limiter state to Redis on Day 6, I used two separate network calls: a GET (to check tokens) followed by a SET (to update them). 
 
-To prove it, I wrote a test suite that fired 200 concurrent requests at a 5-token bucket. The result? 28 allowed requests. A 460% leak.
+It turns out, there's a sub-millisecond gap between those two calls. If a spike of traffic hits that gap simultaneously, multiple requests read the exact same token count and bypass the limiter entirely. 
 
-The fix? I pushed the math down into Redis itself using a Lua script. Because Redis guarantees atomic evaluation of Lua scripts, the entire read-compute-write sequence became indivisible. 
+To prove this wasn't just theory, I wrote a test suite that fired 200 concurrent requests at a 5-token bucket. The result? 28 requests got through. A 460% leak!
 
-Before: 2 Redis calls, race condition under load.
-After: 1 atomic Lua call, mathematically sound. 
+The fix? I rewrote the logic into a Redis Lua script. Because Redis guarantees atomic evaluation of Lua scripts, the entire read-compute-write sequence became one indivisible operation. I re-ran the benchmark, and it perfectly clamped down at exactly 5 requests.
 
-Code is live in the repo!
+I'll be passing to the next day tomorrow to build out the Postgres database schema for cost tracking! Code is live on the repo.
 
 ## X (Twitter) Post
 
 **Draft:**
-Day 8 & 9 of building an AI inference gateway in Go:
+Day 8 & 9: Fixing a Redis rate limiter race condition in Go. 
 
-Bug: Redis GET-then-SET rate limiter leaks tokens under load. 
+Bug: GET-then-SET leaks tokens under load. 
 Proof: Fired 200 concurrent requests at a 5-token bucket. 28 got through. 
-Fix: Rewrote the logic into a Redis Lua script. 
+Fix: Rewrote the math into an atomic Redis Lua script. 
 
-Before: 2 Redis calls (racy)
-After: 1 atomic Lua call (perfectly strict)
+Before: 2 racy Redis calls
+After: 1 perfectly strict Lua call 
+
+Passing to the next day tomorrow to build the cost tracking schema! 👇
