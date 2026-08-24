@@ -1,0 +1,1987 @@
+60-Day Daily Execution Roadmap (v2 — AI
+Infrastructure Capstones)
+Router (AI Inference Gateway) + Retriever (RAG Ingestion Pipeline)
+
+DAY 0 — POST TODAY
+LinkedIn Version
+Starting tomorrow: a 60-day public build sprint. Two production-grade systems,
+built and documented daily, 5 hours a day.
+What I'm building:
+
+1️⃣
+
+Router — an AI inference gateway in Go. Sits between an app and LLM
+
+providers (OpenAI/Anthropic-style), handling per-tenant rate limiting, streaming
+responses, automatic failover between providers via a circuit breaker, and full
+cost/token tracking.
+
+2️⃣
+
+Retriever — a RAG ingestion pipeline in Go. Ingests documents, generates
+
+embeddings through a concurrent worker pool, stores vectors in Postgres
+(pgvector), and exposes a semantic search API — with idempotent reprocessing
+and backpressure handling built in.
+Together: one project covers how AI products serve requests reliably, the other
+covers how they ingest and retrieve data reliably.
+Why publicly: I'm a backend engineer based in Ethiopia, and I've decided the
+fastest way to prove I can operate at a senior level for an international remote
+team isn't a resume — it's showing the work. Every commit, every benchmark,
+every bug will be documented here and on GitHub.
+If you're hiring Go engineers for remote/EoR roles, or building in the AI infra
+space and want to follow along — I'd love the company.
+Day 1 starts tomorrow.
+#golang #buildinpublic #AIinfrastructure #backenddevelopment #remotework
+
+X (Twitter) Version
+
+Starting a 60-day build-in-public sprint tomorrow
+
+🧵
+
+Building 2 Go systems, 5hrs/day, fully documented:
+
+🔹
+🔹
+
+Router — an AI inference gateway (rate limiting, streaming, provider failover,
+
+cost tracking)
+Retriever — a RAG ingestion pipeline (embeddings, pgvector, semantic
+
+search)
+Ethiopia-based, going for an international remote Go role. Watch the receipts,
+not the resume.
+Day 1 tomorrow
+
+👇
+
+(X note: post this as tweet 1 of a thread if you want — tweet 2 can be a 1-line
+summary of why AI infra specifically, tweet 3 can link the empty GitHub repos going
+live. X rewards threads more than single long posts; LinkedIn rewards the single longform post above.)
+
+HOW TO USE THIS DOCUMENT
+Each day lists:
+Concept to Master — the thing you must genuinely understand (not just read
+about) before you're allowed to move to the next day. If you finish your 1.5hr
+learning block and can't explain this concept out loud in 60 seconds, stay on it
+— don't advance.
+Build — your 2.5hr coding task
+LinkedIn Angle — what to post (use the Daily Post Formula below)
+X Angle — a shorter, punchier version — X favors one concrete detail + a
+visual/number over narrative
+Daily Post Formula (LinkedIn): Hook (1 line, specific) → Body (2–4 lines: problem,
+attempt, result with a number) → Close (what's next / a question)
+Daily Post Formula (X): One sentence with a concrete number or artifact
+(screenshot/gif/code snippet) → optional 1-line "why this matters." Shorter than
+LinkedIn — X posts should be scannable in 3 seconds.
+
+WEEK 1 (Days 1–7): Router Foundations — Proxy &
+Concurrency Basics
+
+Day
+
+Concept to
+Master
+
+Build
+
+LinkedIn
+Angle
+
+X Angle
+
+net/http
+reverse
+
+"Repo is live.
+
+proxy
+
+Empty proxy
+
+mechanics
+— how
+1
+
+request
+forwarding
+actually
+works at
+
+Scaffold Router repo
+( /cmd , /internal , /pkg ),
+implement a basic passthrough proxy to a mock
+LLM endpoint
+
+that
+Full post —
+
+forwards
+
+see Day
+
+requests —
+
+0/1 note
+
+day 1 of
+
+below
+
+building an
+AI inference
+
+the
+
+gateway in
+
+transport
+
+Go
+
+level
+Explain
+
+Goroutines
+& channels
+—
+2
+
+unbuffered
+vs buffered,
+when each
+
+why you
+Add concurrent request
+
+didn't just
+
+handling with a bounded
+
+use go
+
+worker pool in front of the
+
+func()
+
+proxy
+
+unbounded
+for every
+
+is correct
+
+request
+
+🔗
+
+"
+
+One-liner:
+the bug
+you'd get
+from
+unbounded
+goroutines
+under load
+
+Show what
+happens to
+Context
+3
+
+propagation
+&
+cancellation
+
+a slow
+Wire context.Context
+
+upstream
+
+with timeouts through the
+
+call
+
+proxy → upstream call
+
+without a
+timeout
+(hang) vs
+
+Before/after:
+request
+hangs
+forever vs
+times out
+cleanly
+
+with one
+Server-Sent
+Events
+
+4
+
+GIF of
+
+(SSE) —
+
+Implement basic SSE
+
+tokens
+
+how
+
+passthrough so streamed
+
+streaming
+
+streaming
+
+LLM responses reach the
+
+through
+
+HTTP
+
+client token-by-token
+
+your proxy
+
+responses
+work
+
+in real time
+
+Same GIF,
+shorter
+caption
+
+Day
+
+Concept to
+Master
+
+LinkedIn
+
+Build
+
+Angle
+Explain
+token
+
+Token
+5
+
+bucket
+algorithm
+(theory)
+
+bucket in
+
+Design the rate limiter data
+model — per-API-key bucket
+state
+
+plain
+English
+with your
+own
+diagram
+
+X Angle
+
+"Token
+bucket >
+fixed
+window for
+LLM rate
+limiting —
+here's why"
+
+What you
+learned
+6
+
+Redis as a
+
+Implement the token bucket
+
+setting up
+
+rate-limit
+
+in Redis (basic version, not
+
+Redis for
+
+store
+
+yet atomic)
+
+the first
+
+—
+
+time in this
+project
+Weekly
+7
+
+Review day
+
+Fix rough edges, write Week
+
+deep-dive
+
+1 Dev.to deep-dive
+
+published
+— link it
+
+Link + onesentence
+teaser
+
+WEEK 2 (Days 8–14): Multi-Tenant Rate Limiting & Cost
+Tracking
+Day
+
+8
+
+9
+
+Concept to
+Master
+
+Build
+
+Race
+
+Find and fix the race
+
+conditions in
+
+condition in your
+
+distributed
+
+Day-6 rate limiter
+
+counters
+
+(there will be one)
+
+LinkedIn
+Angle
+
+X Angle
+
+The race
+condition you
+
+The actual
+
+found and
+
+race — bug
+
+how you found
+
+report style
+
+it
+
+Rewrite the rate
+
+Why GET+SET
+
+Lua scripting
+
+limiter using a Lua
+
+isn't atomic
+
+for Redis
+
+script for atomic
+
+and Lua fixes
+
+atomicity
+
+check-and-
+
+it, with a code
+
+decrement
+
+snippet
+
+Before/after:
+2 Redis calls
+
+→ 1 atomic
+Lua call
+
+Day
+
+Concept to
+Master
+
+Postgres
+schema
+10
+
+design for
+usage/billing
+data
+
+Build
+
+Design and
+implement the
+
+usage_events
+table (tokens used,
+cost, tenant,
+timestamp)
+
+LinkedIn
+Angle
+
+X Angle
+
+The schema
+decision
+behind
+
+—
+
+tracking cost
+per request
+
+How
+Wire auth → rate11
+
+Middleware
+chaining in Go
+
+limit → usagetracking as
+composable
+middleware
+
+middleware
+chaining
+keeps
+handlers clean
+
+—
+
+—a
+before/after of
+handler code
+
+12
+
+13
+
+JWT structure
+& validation
+
+Implement per-
+
+Why you
+
+tenant API key auth
+
+picked JWT vs
+
+(JWT or opaque
+
+opaque
+
+token — pick one,
+
+tokens for this
+
+justify it)
+
+use case
+
+Add an internal
+
+Why the client-
+
+gRPC vs REST
+
+gRPC endpoint for
+
+facing API is
+
+trade-offs for
+
+tenant management
+
+REST/SSE but
+
+internal APIs
+
+(create/revoke API
+
+the internal
+
+keys)
+
+one is gRPC
+
+—
+
+—
+
+Weekly deep-
+
+14
+
+Review day
+
+Weekly deep-dive +
+
+dive + honest
+
+45min
+
+reflection: "2
+
+Short
+
+LeetCode/system
+
+weeks in,
+
+reflection
+
+design instead of
+
+what's harder
+
+tweet
+
+building
+
+than
+expected"
+
+WEEK 3 (Days 15–21): Reliability — Retries, Failover,
+Circuit Breakers
+
+Day
+
+Concept to Master
+
+Build
+
+LinkedIn
+Angle
+
+X Angle
+
+Why jitter
+matters —
+15
+
+Exponential
+backoff + jitter
+
+Implement retry
+
+thundering
+
+logic for failed
+
+herd
+
+upstream calls
+
+explained
+
+—
+
+with a
+number
+
+Circuit breaker
+16
+
+pattern
+(closed/open/halfopen)
+
+Implement a
+
+Diagram of
+
+circuit breaker
+
+the 3 states,
+
+Diagram
+
+from scratch
+
+explained in
+
+only, short
+
+around the
+
+your own
+
+caption
+
+upstream call
+
+words
+Simulate
+
+17
+
+Provider failover
+design
+
+Add a secondary
+
+primary
+
+Log
+
+LLM provider, wire
+
+provider down
+
+snippet:
+
+the circuit breaker
+
+— show
+
+failover
+
+to fail over
+
+automatic
+
+happening
+
+automatically
+
+failover in
+
+live
+
+logs
+Concrete
+
+18
+
+Idempotency keys
+for retried requests
+
+Add idempotency
+
+example:
+
+keys so a retried
+
+what happens
+
+request doesn't get
+
+without
+
+billed/processed
+
+idempotency
+
+twice
+
+(double
+
+—
+
+billing)
+Benchmark all
+19
+
+sync.Mutex vs
+
+three for your in-
+
+atomic vs
+
+memory circuit
+
+sync.RWMutex
+
+breaker state, pick
+the right one
+
+20
+
+Benchmark
+
+Just the
+
+numbers
+
+numbers,
+
+comparing
+
+tweet-
+
+the three
+
+sized
+
+—
+
+Structured logging
+
+Replace ad-hoc
+
+Before/after
+
+( slog ) with
+
+logging with
+
+log readability
+
+correlation IDs
+
+structured slog ,
+add request-ID
+correlation across
+the
+
+Day
+
+Concept to Master
+
+LinkedIn
+
+Build
+
+X Angle
+
+Angle
+
+proxy→upstream
+hop
+Weekly deepdive: "Adding
+failover and
+21
+
+Review day
+
+Weekly deep-dive
+
+circuit
+breakers to
+
+Link +
+teaser
+
+an AI
+gateway"
+
+WEEK 4 (Days 22–28): Observability, Deployment &
+Router Launch
+Day
+
+22
+
+23
+
+24
+
+25
+
+Concept to Master
+
+Prometheus metrics types
+(counter/histogram/gauge)
+
+Grafana dashboard design
+
+pprof heap & goroutine
+profiling
+
+Docker multi-stage builds
+
+Build
+
+LinkedIn
+Angle
+
+X Angle
+
+Instrument Router
+
+What
+
+with request
+
+metrics you
+
+latency, error rate,
+
+chose to
+
+active streams
+
+expose and
+
+metrics
+
+why
+
+Build a dashboard
+
+Screenshot
+
+visualizing Router's
+
+of the
+
+health in real time
+
+dashboard
+
+Deliberately leak a
+
+Walk
+
+goroutine
+
+through the
+
+(unclosed stream),
+
+pprof trace
+
+find it with pprof, fix
+
+that caught
+
+it
+
+the leak
+
+Write a production
+
+Image size
+
+Dockerfile,
+
+before/after
+
+Just the
+
+minimize final
+
+multi-stage
+
+numbers
+
+image size
+
+build
+
+—
+
+Same
+screenshot
+
+—
+
+Day
+
+Concept to Master
+
+LinkedIn
+
+Build
+
+Wire Router + Redis
++ Postgres +
+26
+
+docker-compose for full
+
+Prometheus +
+
+local stack
+
+Grafana into one
+
+docker-compose
+up
+
+27
+
+CI/CD basics with GitHub
+Actions
+
+X Angle
+
+Angle
+
+Add lint, test, vet,
+
+govulncheck to
+CI pipeline
+
+GIF of the
+full stack
+starting
+
+Same GIF
+
+with one
+command
+
+Your CI
+badge
+
+—
+
+turning
+green
+
+Final polish, write
+28
+
+Router Launch Day
+
+ARCHITECTURE.md
+
+Full launch
+
++
+
+post — see
+
+BENCHMARKS.md,
+
+below
+
+Full launch
+post (X
+version) —
+see below
+
+tag v1.0.0
+
+WEEK 5 (Days 29–35): Retriever Foundations — Ingestion
+Pipeline
+Day
+
+Concept to
+Master
+
+Build
+
+LinkedIn Angle
+
+X
+Angle
+
+Scaffold
+Document
+29
+
+chunking
+strategies
+
+Retriever repo,
+
+Announce Retriever
+
+implement basic
+
+has started — link
+
+text chunking
+
+back to Router's
+
+(fixed-size +
+
+launch
+
+—
+
+overlap)
+
+30
+
+31
+
+Embedding APIs
+
+Wire a call to an
+
+Also: start applying to
+
+— how vector
+
+embedding API
+
+roles in parallel today
+
+embeddings
+
+(OpenAI/local
+
+— no special post
+
+work
+
+model), embed a
+
+needed, keep it
+
+conceptually
+
+single chunk
+
+technical
+
+Worker pool for
+
+Build a worker
+
+Throughput number:
+
+batch
+
+pool that
+
+chunks embedded per
+
+—
+
+—
+
+Day
+
+Concept to
+Master
+processing
+
+Build
+
+LinkedIn Angle
+
+embeds multiple
+
+second with N workers
+
+X
+Angle
+
+chunks
+concurrently
+Set up Postgres
+with pgvector
+32
+
+pgvector
+
+extension, design
+
+fundamentals
+
+the
+
+embeddings
+table
+
+33
+
+Why
+Postgres+pgvector
+over a dedicated
+
+—
+
+vector DB — your
+reasoning
+
+Vector similarity
+
+Implement a
+
+Explain cosine
+
+search (cosine
+
+basic similarity
+
+similarity in plain
+
+vs L2 distance)
+
+search query
+
+English
+
+—
+
+Define .proto
+34
+
+gRPC service
+
+for the search
+
+Screenshot of a
+
+design for
+
+endpoint,
+
+search query returning
+
+search API
+
+implement the
+
+ranked results
+
+—
+
+gRPC server
+Weekly deep-dive:
+35
+
+Review day
+
+Weekly deep-dive
+
+"Building a RAG
+
+Link +
+
+ingestion pipeline in
+
+teaser
+
+Go"
+
+WEEK 6 (Days 36–42): Idempotency, Backpressure &
+Reliability
+Day
+
+Concept to
+Master
+
+Build
+
+Implement contentContent
+36
+
+hashing for
+deduplication
+
+hash-based
+idempotency so reingesting a document
+doesn't duplicate
+vectors
+
+LinkedIn Angle
+
+X
+Angle
+
+The bug you'd
+get without this
+(duplicate
+search results)
+with an example
+
+—
+
+Day
+
+Concept to
+Master
+
+Build
+
+37
+
+(bounded
+channels,
+blocking
+
+X
+Angle
+
+What happens
+
+Backpressure
+— theory
+
+LinkedIn Angle
+
+when the
+Add bounded queue
+
+embedding API
+
+between ingestion and
+
+rate-limits you —
+
+embedding worker pool
+
+show the
+
+—
+
+backpressure
+
+sends)
+
+kick in
+Reusing Router's
+
+38
+
+Rate limiting
+
+Wire a rate limiter (reuse
+
+outbound calls
+
+your Router pattern)
+
+to the
+
+around outbound
+
+embedding API
+
+embedding calls
+
+rate limiter code
+here — a post
+about code
+
+—
+
+reuse across
+your two
+projects
+
+Retry + dead39
+
+letter handling
+for failed
+embeddings
+
+40
+
+chunks that repeatedly
+fail embedding
+
+Failed-chunk
+visibility: before
+(silent failure) vs
+
+Profile the
+
+-gcflags="-
+
+analysis ( -
+
+chunking/embedding
+
+m" output and
+
+gcflags="-
+
+hot path, reduce heap
+
+what you
+
+m" )
+
+allocations
+
+changed
+
+streaming
+ingestion tradeoffs
+
+—
+
+after (DLQ table)
+
+Escape
+
+Batch vs
+41
+
+Add retry/DLQ for
+
+—
+
+Add a batch ingestion
+endpoint (bulk
+
+Why you support
+
+document upload)
+
+both modes —
+
+alongside single-doc
+
+the trade-off
+
+—
+
+ingestion
+Weekly deepdive: "Handling
+backpressure
+
+42
+
+Review day
+
+Weekly deep-dive
+
+and
+idempotency in
+a Go ingestion
+pipeline"
+
+Link +
+teaser
+
+WEEK 7 (Days 43–49): Scaling, Search Quality & Load
+Testing
+Day
+
+Concept to Master
+
+Build
+
+LinkedIn Angle
+
+X Angle
+
+Run 2+
+instances of the
+43
+
+Consumer scaling —
+
+embedding
+
+running multiple
+
+worker pool,
+
+worker instances
+
+verify no
+duplicate
+
+Screenshot/log
+of 2 instances
+processing
+
+—
+
+without collision
+
+processing
+Add an index to
+Index tuning for
+44
+
+pgvector
+(HNSW/IVFFlat)
+
+the embeddings
+
+Query latency:
+
+The
+
+table,
+
+before index vs
+
+number,
+
+benchmark
+
+after — the
+
+tweet-
+
+query latency
+
+number
+
+sized
+
+before/after
+
+Load testing
+45
+
+fundamentals
+(k6/vegeta)
+
+Load test the
+search endpoint
+
+First load test
+
+at increasing
+
+results
+
+RPS
+Find the
+
+46
+
+—
+
+Reading p50/p95/p99
+
+breaking point
+
+latency
+
+of the search
+API
+
+The graph post
+— RPS vs
+latency chart
+
+Same
+graph
+
+Why pure vector
+Hybrid search
+47
+
+(keyword + vector) —
+concept only
+
+Add a simple
+
+search wasn't
+
+keyword pre-
+
+enough — a real
+
+filter alongside
+
+example query
+
+vector search
+
+that improved
+
+—
+
+with hybrid
+Deploy Retriever
+48
+
+Kubernetes basics
+
+to a local k8s
+
+Screenshot of
+
+(Deployment/Service)
+
+cluster
+
+pods running
+
+—
+
+(kind/minikube)
+49
+
+Review day
+
+Weekly deep-
+
+Weekly deep-
+
+Link +
+
+dive
+
+dive: "Scaling a
+
+teaser
+
+RAG pipeline
+
+Day
+
+Concept to Master
+
+Build
+
+LinkedIn Angle
+
+X Angle
+
+and tuning
+pgvector for
+latency"
+
+WEEK 8 (Days 50–52): Tracing & Retriever Launch
+Day
+
+50
+
+Concept to
+Master
+
+Distributed
+
+Instrument ingestion
+
+tracing
+
+→ embedding →
+
+(spans, trace
+
+storage with
+
+context)
+
+OpenTelemetry
+
+Trace
+51
+
+Build
+
+visualization
+(Jaeger)
+
+View a full ingestion
+trace end-to-end
+
+Final polish,
+52
+
+Retriever
+
+ARCHITECTURE.md +
+
+Launch Day
+
+BENCHMARKS.md,
+tag v1.0.0
+
+LinkedIn
+Angle
+
+X Angle
+
+What a trace
+showed you
+that logs
+
+—
+
+alone
+couldn't
+Screenshot
+of the trace
+waterfall
+
+Full launch
+post — see
+below
+
+Same
+screenshot
+
+Full launch
+post (X
+version) —
+see below
+
+WEEK 9 (Days 53–56): Cross-Linking & Polish
+Concept
+Day
+
+to
+
+Build
+
+LinkedIn Angle
+
+Master
+
+Cross-link both repos,
+53
+
+— (review
+
+verify both docker-
+
+only)
+
+compose up cleanly from
+a fresh clone
+
+X
+Angle
+
+"Re-tested both from
+a clean clone —
+here's what broke"
+(honesty posts build
+trust)
+
+—
+
+Concept
+Day
+
+to
+
+Build
+
+X
+
+LinkedIn Angle
+
+Angle
+
+Master
+Deep dive on your
+54
+
+—
+
+Write/polish
+
+single best
+
+DECISIONS.md (ADR-
+
+architectural
+
+style) for both repos
+
+decision across all
+
+—
+
+60 days
+
+55
+
+—
+
+Record a short
+
+Post the video —
+
+walkthrough video of each
+
+stands out in a feed
+
+project
+
+of text
+
+—
+
+Full-sprint
+
+56
+
+—
+
+Final benchmark run,
+
+before/after
+
+update BENCHMARKS.md
+
+numbers (Day 5
+
+with final numbers on
+
+throughput vs Day
+
+both
+
+56, Day 45 latency vs
+
+—
+
+Day 56)
+
+WEEK 10 (Days 57–60): Interview Prep & Wrap-Up
+Day
+
+57
+
+Concept to
+Master
+
+LinkedIn Angle
+
+Mock system-
+
+Optional: repost
+
+Explain Router's
+
+design
+
+your best-
+
+architecture out
+
+interview using
+
+performing post
+
+loud in 5 minutes
+
+Router as the
+
+with new
+
+answer
+
+reflection
+
+Explain
+58
+
+Build
+
+Retriever's
+architecture out
+loud in 5 minutes
+
+X Angle
+
+—
+
+Mock systemdesign
+interview using
+Retriever as the
+answer
+
+—
+
+—
+
+Concept to
+
+Day
+
+Build
+
+Master
+
+—
+
+—
+
+from real
+
+behavioral
+stories from real
+bugs
+
+incidents
+across the 60
+days
+
+Final repo
+60
+
+X Angle
+
+Draft 5 stories
+
+STAR-format
+59
+
+LinkedIn Angle
+
+—
+
+review, final
+commits
+
+Full closing
+Full closing post
+
+post (X
+
+— see below
+
+version) —
+see below
+
+FULLY WRITTEN MILESTONE POSTS
+Day 28 — Router Launch (LinkedIn)
+
+🚀
+
+Router v1.0.0 is live — an AI inference gateway built in Go over the last 28
+
+days.
+What it does: sits between your app and LLM providers, handling per-tenant
+token-bucket rate limiting (atomic via Redis+Lua), SSE streaming passthrough,
+automatic failover between providers via a circuit breaker, and per-request
+cost/token tracking in Postgres.
+The number I'm proudest of: simulated the primary provider going down midload-test — automatic failover kicked in with zero dropped requests.
+Fully documented — architecture diagram, benchmarks, and a docker-compose
+up that gets you the whole stack running in under 3 minutes.
+
+Project 1 of 2 in a 60-day public build sprint. Starting Retriever tomorrow — a
+RAG ingestion pipeline.
+Repo: [link] | Architecture: [link]
+
+Day 28 — Router Launch (X)
+Router v1 is live
+
+🚀
+
+— AI inference gateway in Go.
+
+Per-tenant rate limiting, SSE streaming, automatic provider failover via circuit
+breaker, cost tracking per request.
+
+Killed the primary provider mid-load-test → 0 dropped requests, automatic
+failover.
+Repo: [link]
+
+Day 52 — Retriever Launch (LinkedIn)
+
+🚀
+
+Retriever v1.0.0 is live — a RAG ingestion pipeline built in Go.
+
+Ingests documents, chunks and embeds them through a concurrent worker
+pool, stores vectors in Postgres (pgvector), and exposes a semantic search API.
+Idempotent reprocessing (no duplicate vectors on re-ingestion), backpressure
+handling when the embedding API rate-limits, and horizontal scaling across
+multiple worker instances.
+Query latency after index tuning: [X]ms at p99, tested up to [Y] RPS.
+This closes out my 60-day public build sprint: Router handles how AI products
+
+serve requests reliably, Retriever handles how they ingest and retrieve data
+reliably. Full source, benchmarks, and architecture docs for both are linked
+below.
+Repos: [link] [link]
+
+Day 52 — Retriever Launch (X)
+Retriever v1 is live
+
+🚀
+
+— RAG ingestion pipeline in Go.
+
+Concurrent embedding worker pool → pgvector storage → semantic search
+API. Idempotent, backpressure-aware, horizontally scalable.
+p99 latency: [X]ms at [Y] RPS.
+This + Router = 60 days of building AI infra in public. Repos: [link]
+
+Day 60 — Closing Post (LinkedIn)
+60 days ago I said I'd build two production-grade AI infrastructure systems in
+public, 5 hours a day, and document every step. Today's day 60.
+What shipped: Router — an AI inference gateway with rate limiting, streaming,
+provider failover, and cost tracking. Retriever — a RAG ingestion pipeline with
+concurrent embedding, pgvector search, and horizontal scaling.
+What I didn't expect: [pick one real, honest thing from the sprint].
+If you're hiring Go engineers for remote/EoR roles, especially in AI infrastructure
+— I'm based in Ethiopia, available now, and everything above is public and
+
+runnable. Happy to walk through either system live.
+Repos: [link] [link] | Full write-up index: [link]
+
+Day 60 — Closing Post (X)
+60 days. 2 Go systems shipped, fully public.
+Router — AI inference gateway (rate limiting, streaming, failover)
+Retriever — RAG ingestion pipeline (embeddings, pgvector, search)
+Every commit, bug, and benchmark documented daily.
+Based in Ethiopia. Open to remote Go roles. Repos: [link]
+
+WHAT YOU WILL LEARN — PER PROJECT
+Router (AI Inference Gateway) — Learning Outcomes
+By the end of this project you will be able to:
+Build a reverse proxy in Go from the standard library up, including streaming
+(SSE) passthrough
+Implement atomic distributed rate limiting (token bucket) using Redis + Lua,
+and explain why naive GET/SET approaches are unsafe under concurrency
+Design and implement a circuit breaker from scratch, and explain the
+closed/open/half-open state machine
+Handle automatic failover between multiple upstream providers under real
+failure conditions
+Design idempotent request handling to prevent double-processing on retries
+Track and attribute cost/usage data per tenant in Postgres
+Profile and eliminate goroutine leaks using pprof
+Instrument a production service with Prometheus metrics and build a Grafana
+dashboard
+Containerize and deploy a multi-service local stack with Docker Compose, with
+CI/CD via GitHub Actions
+
+Retriever (RAG Ingestion Pipeline) — Learning Outcomes
+By the end of this project you will be able to:
+Design and implement a concurrent worker-pool architecture for batch APIbound workloads (embedding generation)
+
+Work with vector embeddings and similarity search (cosine/L2 distance) using
+Postgres + pgvector
+Implement content-hash-based idempotency to prevent duplicate processing in
+a data pipeline
+Design and implement backpressure handling between pipeline stages using
+bounded channels
+Scale consumers horizontally and reason about coordination/duplication
+across multiple instances
+Tune vector index strategy (HNSW/IVFFlat) and measure its effect on query
+latency
+Implement hybrid (keyword + vector) search and explain when pure vector
+search falls short
+Instrument a data pipeline with distributed tracing (OpenTelemetry) and read a
+trace waterfall to debug latency
+Load test a search API and interpret p50/p95/p99 latency under increasing
+load
+Combined, cross-project outcome: you will be able to speak fluently, with your own
+working code as evidence, about both halves of production AI infrastructure — the
+real-time serving layer and the data ingestion/retrieval layer — which is a distinct
+and rare combination in a junior-to-mid candidate pool.
+
+
