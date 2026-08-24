@@ -3,28 +3,66 @@
 // so the limit is shared correctly across every Router process talking to
 // the same Redis — not just correct within one process's memory.
 //
-// IMPORTANT, and this is today's whole lesson: this version reads the
-// current state, does the token math in Go, then writes the new state
-// back — as two separate round trips to Redis (GET, then SET). Between
-// those two round trips, nothing stops a second goroutine — or a second
-// Router *process* entirely — from doing the exact same GET and computing
-// against the same stale numbers. That's a real race condition, left in
-// on purpose. Day 8 writes a concurrent stress test that proves it happens
-// in practice, not just in theory. Day 9 fixes it properly with a Lua
-// script that makes the whole read-modify-write happen as one atomic
-// operation on Redis's side. Today's job is just: get the state moved
-// into shared storage, and be able to explain exactly where the crack is.
+// IMPORTANT: On Day 6, this version read the current state, computed the
+// math in Go, and wrote back as two separate round trips (GET then SET).
+// That left a race condition where concurrent requests could read the same
+// state before it was updated.
+//
+// Today (Day 8/9 combined), we fixed it by moving the entire read-modify-write
+// sequence into a single Lua script. Redis executes Lua scripts atomically —
+// no other command can run while the script is evaluating. This guarantees
+// the GET and SET happen together without any gap for a race condition.
 package ratelimit
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// luaRateLimit is the atomic script that replaces Day 6's GET-then-SET.
+// Redis guarantees that no other command runs while a Lua script executes,
+// which makes the entire read-compute-write sequence indivisible.
+var luaRateLimit = redis.NewScript(`
+	local tokensKey = KEYS[1]
+	local lastRefillKey = KEYS[2]
+
+	local capacity = tonumber(ARGV[1])
+	local refillRate = tonumber(ARGV[2]) -- tokens per second
+	local nowMicro = tonumber(ARGV[3])
+	local ttl = tonumber(ARGV[4]) -- in seconds
+
+	local tokens = tonumber(redis.call("GET", tokensKey))
+	local lastRefillMicro = tonumber(redis.call("GET", lastRefillKey))
+
+	if tokens == nil or lastRefillMicro == nil then
+		tokens = capacity
+		lastRefillMicro = nowMicro
+	end
+
+	local elapsedSec = (nowMicro - lastRefillMicro) / 1000000.0
+	if elapsedSec > 0 then
+		tokens = tokens + (elapsedSec * refillRate)
+	end
+
+	if tokens > capacity then
+		tokens = capacity
+	end
+
+	local allowed = 0
+	if tokens >= 1 then
+		tokens = tokens - 1
+		allowed = 1
+	end
+
+	-- Save the new state back
+	redis.call("SET", tokensKey, tostring(tokens), "EX", ttl)
+	redis.call("SET", lastRefillKey, tostring(nowMicro), "EX", ttl)
+
+	return allowed
+`)
 
 // RedisLimiter implements Limiter using Redis as the shared store.
 type RedisLimiter struct {
@@ -64,88 +102,30 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
 	tokensKey := fmt.Sprintf("ratelimit:%s:tokens", identity)
 	lastRefillKey := fmt.Sprintf("ratelimit:%s:last_refill_ns", identity)
 
-	// --- ROUND TRIP 1: read current state ---
-	tokens, err := l.readFloat(ctx, tokensKey, l.capacity)
+	// The TTL ensures keys don't leak forever. We calculate it in Go and
+	// pass it to Lua.
+	ttlSeconds := int(2 * l.capacity / l.refillRate)
+	if ttlSeconds < 1 {
+		ttlSeconds = 1
+	}
+
+	// nowMicro uses microseconds. It fits perfectly into a Lua double-precision
+	// float without losing precision (max Lua double exact integer is ~9 quadrillion,
+	// current Unix micro is ~1.7 quadrillion).
+	nowMicro := time.Now().UnixMicro()
+
+	// --- ATOMIC EVALUATION ---
+	// The entire algorithm now runs inside Redis via Lua.
+	res, err := luaRateLimit.Run(ctx, l.client,
+		[]string{tokensKey, lastRefillKey}, // KEYS
+		l.capacity, l.refillRate, nowMicro, ttlSeconds, // ARGV
+	).Result()
+
 	if err != nil {
-		return false, fmt.Errorf("ratelimit: reading tokens: %w", err)
-	}
-	lastRefillNs, err := l.readInt(ctx, lastRefillKey, time.Now().UnixNano())
-	if err != nil {
-		return false, fmt.Errorf("ratelimit: reading last refill time: %w", err)
+		return false, fmt.Errorf("ratelimit: lua script failed: %w", err)
 	}
 
-	// --- Same math as Day 5's in-memory bucket, unchanged ---
-	// This is the point worth noticing: the ALGORITHM didn't change at
-	// all moving to Redis. Only where the numbers live changed.
-	now := time.Now()
-	elapsed := now.Sub(time.Unix(0, lastRefillNs)).Seconds()
-	tokens += elapsed * l.refillRate
-	if tokens > l.capacity {
-		tokens = l.capacity
-	}
-
-	allowed := false
-	if tokens >= 1 {
-		tokens--
-		allowed = true
-	}
-
-	// --- ROUND TRIP 2: write the new state back ---
-	// THIS is the gap. Between the GET above and this SET, another
-	// goroutine — or another Router process entirely — could have run
-	// the exact same steps against the exact same starting numbers.
-	// Nothing here detects or prevents that; it's simply not addressed
-	// yet. A pipeline batches the two SETs into one network round trip
-	// for efficiency, but that is NOT the same thing as making the
-	// overall GET+GET+compute+SET+SET sequence atomic — it only saves a
-	// network hop, it does not add any locking.
-	//
-	// Day 7 fix: both keys now carry a TTL instead of living forever.
-	// The TTL isn't an arbitrary guess — it's set to a bit longer than
-	// however long it takes this bucket to refill from completely empty
-	// back to completely full (capacity / refillRate seconds), with a
-	// 2x safety margin. That choice means expiry can never change
-	// observable behavior: if a tenant has genuinely been silent longer
-	// than that, their bucket would already be back at full capacity
-	// anyway — so letting Redis delete the key and having the next
-	// request fall back to readFloat's default (a full bucket) produces
-	// the exact same result as if the key had never expired. Without
-	// this, every API key that's ever made one request — including
-	// abusive one-off scanning traffic — leaves two permanent entries in
-	// Redis forever, a slow, silent memory leak.
-	ttl := time.Duration(2 * l.capacity / l.refillRate * float64(time.Second))
-
-	pipe := l.client.Pipeline()
-	pipe.Set(ctx, tokensKey, tokens, ttl)
-	pipe.Set(ctx, lastRefillKey, now.UnixNano(), ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return false, fmt.Errorf("ratelimit: persisting bucket state: %w", err)
-	}
-
-	return allowed, nil
+	return res.(int64) == 1, nil
 }
 
-// readFloat fetches a float64 stored at key, or returns fallback if the
-// key doesn't exist yet (a brand-new tenant's first-ever request).
-func (l *RedisLimiter) readFloat(ctx context.Context, key string, fallback float64) (float64, error) {
-	s, err := l.client.Get(ctx, key).Result()
-	if errors.Is(err, redis.Nil) {
-		return fallback, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseFloat(s, 64)
-}
 
-// readInt fetches an int64 stored at key, or returns fallback if unset.
-func (l *RedisLimiter) readInt(ctx context.Context, key string, fallback int64) (int64, error) {
-	s, err := l.client.Get(ctx, key).Result()
-	if errors.Is(err, redis.Nil) {
-		return fallback, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseInt(s, 10, 64)
-}
