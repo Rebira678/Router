@@ -92,13 +92,14 @@ I'll be passing to the next day tomorrow to build out the Postgres database sche
 ## X (Twitter) Post
 
 **Draft:**
-Day 8 & 9: Fixing a Redis rate limiter race condition in Go. 
+Day 8 & 9: Fixing a Redis rate limiter race condition.
 
-Bug: GET-then-SET leaks tokens under load. 
-Proof: Fired 200 concurrent requests at a 5-token bucket. 28 got through. 
-Fix: Rewrote the math into an atomic Redis Lua script. 
+Bug: GET-then-SET leaks tokens.
+Proof: 200 concurrent requests at a 5-token bucket = 28 allowed.
+Fix: Atomic Lua script.
 
-Before: 2 racy Redis calls
-After: 1 perfectly strict Lua call 
+Before: 2 racy calls
+After: 1 strict Lua call
 
-Passing to the next day tomorrow to build the cost tracking schema! 👇
+Passing to Day 10 tomorrow! 👇
+#golang #buildinpublic
