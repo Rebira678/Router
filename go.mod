@@ -2,7 +2,10 @@ module github/rebik
 
 go 1.26.5
 
-require github.com/redis/go-redis/v9 v9.5.1
+require (
+	github.com/lib/pq v1.12.3
+	github.com/redis/go-redis/v9 v9.5.1
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
