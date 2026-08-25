@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yourname/router/internal/identity"
+	"github/rebik/internal/identity"
 
 	_ "github.com/lib/pq" // registers the "postgres" driver with database/sql
 )

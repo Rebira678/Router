@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/yourname/router/internal/mockllm"
-	"github.com/yourname/router/internal/proxy"
-	"github.com/yourname/router/internal/ratelimit"
-	"github.com/yourname/router/internal/usage"
-	"github.com/yourname/router/internal/workerpool"
+	"github/rebik/internal/mockllm"
+	"github/rebik/internal/proxy"
+	"github/rebik/internal/ratelimit"
+	"github/rebik/internal/usage"
+	"github/rebik/internal/workerpool"
 )
 
 func main() {
@@ -33,7 +33,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	const (
-		mockAddr  = ":9090"
+		mockAddr  = ":9091"
 		proxyAddr = ":8080"
 	)
 
