@@ -20,12 +20,12 @@ import (
 	"syscall"
 	"time"
 
-	"github/rebik/internal/mockllm"
-	"github/rebik/internal/proxy"
-	"github/rebik/internal/ratelimit"
-	"github/rebik/internal/workerpool"
-
 	"github.com/redis/go-redis/v9"
+	"github.com/yourname/router/internal/mockllm"
+	"github.com/yourname/router/internal/proxy"
+	"github.com/yourname/router/internal/ratelimit"
+	"github.com/yourname/router/internal/usage"
+	"github.com/yourname/router/internal/workerpool"
 )
 
 func main() {
@@ -33,7 +33,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	const (
-		mockAddr  = ":9091"
+		mockAddr  = ":9090"
 		proxyAddr = ":8080"
 	)
 
@@ -101,6 +101,34 @@ func main() {
 	limiter := ratelimit.NewRedisLimiter(redisClient, rateLimitCapacity, rateLimitRefillRate)
 	rateLimitedHandler := ratelimit.Middleware(boundedHandler, limiter, ratelimit.KeyFromAuthHeader)
 
+	// Day 10: connect to Postgres for usage/billing tracking. Deliberately
+	// NOT wired into rateLimitedHandler's chain yet — Day 11 is
+	// specifically about composing auth → rate-limit → usage-tracking as
+	// middleware, and doing that wiring today would be jumping ahead of
+	// the roadmap's own sequencing. Today's job is only: prove the
+	// connection and the schema work, via Store.Record below.
+	pgDSN := os.Getenv("POSTGRES_DSN")
+	if pgDSN == "" {
+		pgDSN = "postgres://postgres:postgres@localhost:5432/router?sslmode=disable"
+	}
+	usageStore, err := usage.NewStore(pgDSN)
+	if err != nil {
+		slog.Error("router: cannot open postgres connection", "error", err)
+		os.Exit(1)
+	}
+
+	pgPingCtx, pgPingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := usageStore.Ping(pgPingCtx); err != nil {
+		pgPingCancel()
+		slog.Error("router: cannot reach postgres at startup",
+			"error", err,
+			"hint", "start Postgres locally, e.g. `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=router postgres:16-alpine`, then apply migrations/0001_usage_events.sql",
+		)
+		os.Exit(1)
+	}
+	pgPingCancel()
+	slog.Info("postgres: connected")
+
 	proxySrv := &http.Server{
 		Addr:              proxyAddr,
 		Handler:           rateLimitedHandler,
@@ -130,4 +158,5 @@ func main() {
 	_ = proxySrv.Shutdown(ctx)
 	_ = mockSrv.Shutdown(ctx)
 	_ = redisClient.Close()
+	_ = usageStore.Close()
 }
