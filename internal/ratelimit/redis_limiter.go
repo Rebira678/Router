@@ -117,7 +117,7 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
 	// --- ATOMIC EVALUATION ---
 	// The entire algorithm now runs inside Redis via Lua.
 	res, err := luaRateLimit.Run(ctx, l.client,
-		[]string{tokensKey, lastRefillKey}, // KEYS
+		[]string{tokensKey, lastRefillKey},             // KEYS
 		l.capacity, l.refillRate, nowMicro, ttlSeconds, // ARGV
 	).Result()
 
@@ -127,5 +127,3 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
 
 	return res.(int64) == 1, nil
 }
-
-
