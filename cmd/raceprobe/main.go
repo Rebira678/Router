@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github/rebik/internal/ratelimit"
 	"github.com/redis/go-redis/v9"
+	"github/rebik/internal/ratelimit"
 )
 
 func main() {
@@ -30,13 +30,13 @@ func main() {
 	}
 
 	log.Printf("Starting race probe. Concurrency: %d, Capacity: %.0f", *goroutines, *capacity)
-	
+
 	// Create the limiter with 0 refill rate to isolate the test from time passing.
 	limiter := ratelimit.NewRedisLimiter(client, *capacity, 0.0)
-	
+
 	// Use a unique tenant so multiple runs don't interfere.
 	tenant := fmt.Sprintf("raceprobe-tenant-%d", time.Now().UnixNano())
-	
+
 	// Pre-seed the bucket in Redis to exactly capacity.
 	// We hash the identity the same way internal/ratelimit does (although it's internal to the package).
 	// To do this properly without duplicating hashIdentity, we let the limiter handle it
@@ -46,10 +46,10 @@ func main() {
 	// but that can be racy. We'll pre-seed by calling the unexported hashIdentity in test,
 	// but here we are in main. Let's just make one dummy call to initialize it, then reset.
 	_, _ = limiter.Allow(context.Background(), tenant)
-	
-	// Wait a tiny bit and let's just hammer it anyway. The race is so prominent 
+
+	// Wait a tiny bit and let's just hammer it anyway. The race is so prominent
 	// it will trigger regardless of perfect pre-seeding if concurrency is high enough.
-	
+
 	var (
 		allowed atomic.Int64
 		denied  atomic.Int64
@@ -57,16 +57,16 @@ func main() {
 		wg      sync.WaitGroup
 		barrier sync.WaitGroup
 	)
-	
+
 	barrier.Add(1)
-	
+
 	log.Printf("Spawning %d goroutines...", *goroutines)
 	for i := 0; i < *goroutines; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			barrier.Wait() // Block until all goroutines are spawned and ready
-			
+
 			ok, err := limiter.Allow(context.Background(), tenant)
 			if err != nil {
 				errored.Add(1)
@@ -79,25 +79,25 @@ func main() {
 			}
 		}()
 	}
-	
+
 	// Wait for goroutines to hit the barrier
 	time.Sleep(100 * time.Millisecond)
-	
+
 	start := time.Now()
 	barrier.Done() // FIRE!
 	wg.Wait()
 	elapsed := time.Since(start)
-	
+
 	a := allowed.Load()
 	d := denied.Load()
 	e := errored.Load()
-	
+
 	fmt.Printf("\n--- RESULTS ---\n")
 	fmt.Printf("Time elapsed: %v\n", elapsed)
 	fmt.Printf("Allowed:      %d (Capacity was %.0f)\n", a, *capacity)
 	fmt.Printf("Denied:       %d\n", d)
 	fmt.Printf("Errors:       %d\n", e)
-	
+
 	if a > int64(*capacity) {
 		fmt.Printf("\n❌ RACE CONDITION PROVEN!\n")
 		fmt.Printf("The system allowed %d requests, which is %d more than the hard limit of %.0f.\n", a, a-int64(*capacity), *capacity)
