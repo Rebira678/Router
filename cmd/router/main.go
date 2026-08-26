@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github/rebik/internal/identity"
+	"github/rebik/internal/middleware"
 	"github/rebik/internal/mockllm"
 	"github/rebik/internal/proxy"
 	"github/rebik/internal/ratelimit"
@@ -99,14 +101,8 @@ func main() {
 		rateLimitRefillRate = 2
 	)
 	limiter := ratelimit.NewRedisLimiter(redisClient, rateLimitCapacity, rateLimitRefillRate)
-	rateLimitedHandler := ratelimit.Middleware(boundedHandler, limiter, ratelimit.KeyFromAuthHeader)
 
-	// Day 10: connect to Postgres for usage/billing tracking. Deliberately
-	// NOT wired into rateLimitedHandler's chain yet — Day 11 is
-	// specifically about composing auth → rate-limit → usage-tracking as
-	// middleware, and doing that wiring today would be jumping ahead of
-	// the roadmap's own sequencing. Today's job is only: prove the
-	// connection and the schema work, via Store.Record below.
+	// Day 10: connect to Postgres for usage/billing tracking.
 	pgDSN := os.Getenv("POSTGRES_DSN")
 	if pgDSN == "" {
 		pgDSN = "postgres://postgres:postgres@localhost:5432/router?sslmode=disable"
@@ -116,6 +112,14 @@ func main() {
 		slog.Error("router: cannot open postgres connection", "error", err)
 		os.Exit(1)
 	}
+
+	authMw := identity.Middleware()
+	rateLimitMw := ratelimit.Middleware(limiter, func(r *http.Request) string {
+		return identity.FromContext(r.Context())
+	})
+	usageMw := usage.Middleware(usageStore, "mock-llm-v1")
+
+	composedHandler := middleware.Chain(boundedHandler, authMw, rateLimitMw, usageMw)
 
 	pgPingCtx, pgPingCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := usageStore.Ping(pgPingCtx); err != nil {
@@ -131,7 +135,7 @@ func main() {
 
 	proxySrv := &http.Server{
 		Addr:              proxyAddr,
-		Handler:           rateLimitedHandler,
+		Handler:           composedHandler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
