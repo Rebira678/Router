@@ -2,19 +2,19 @@
 //
 // This file contains two categories of tests:
 //
-// 1. TestRedisLimiter_RaceCondition — the core proof. It creates a
-//    RedisLimiter with exactly N tokens, fires M >> N concurrent Allow()
-//    calls, and counts how many were admitted. If the count exceeds N, the
-//    race condition from Day 6 has been triggered: multiple goroutines all
-//    read the same "tokens available" value before any of them wrote the
-//    decremented value back, so they all got allowed on the same token.
+//  1. TestRedisLimiter_RaceCondition — the core proof. It creates a
+//     RedisLimiter with exactly N tokens, fires M >> N concurrent Allow()
+//     calls, and counts how many were admitted. If the count exceeds N, the
+//     race condition from Day 6 has been triggered: multiple goroutines all
+//     read the same "tokens available" value before any of them wrote the
+//     decremented value back, so they all got allowed on the same token.
 //
-// 2. TestMemoryLimiter_NoRace — a control test proving the in-memory
-//    version (which uses a mutex) does NOT have this problem. Same
-//    concurrency pattern, same assertion shape, opposite expected outcome.
-//    This is important because it proves the test methodology itself is
-//    sound — if the in-memory version also leaked tokens, the test would
-//    be wrong, not the limiter.
+//  2. TestMemoryLimiter_NoRace — a control test proving the in-memory
+//     version (which uses a mutex) does NOT have this problem. Same
+//     concurrency pattern, same assertion shape, opposite expected outcome.
+//     This is important because it proves the test methodology itself is
+//     sound — if the in-memory version also leaked tokens, the test would
+//     be wrong, not the limiter.
 //
 // Both tests are designed to be run with -race (go test -race) as well,
 // which detects unsynchronized memory access at the Go level. But the race
@@ -100,28 +100,30 @@ func flushTestKeys(t *testing.T, client *redis.Client, tenantPrefix string) {
 //     consumed the same token independently.
 //
 // Why 200 goroutines, not 6?
-//   The race is probabilistic — two calls have to hit the gap between
-//   GET and SET on the same data. With only 6, the window is so narrow
-//   you'd need to run the test hundreds of times to see one failure. 200
-//   goroutines with a start barrier makes the collision near-certain on
-//   the first run. The test runs multiple rounds to further increase
-//   confidence.
+//
+//	The race is probabilistic — two calls have to hit the gap between
+//	GET and SET on the same data. With only 6, the window is so narrow
+//	you'd need to run the test hundreds of times to see one failure. 200
+//	goroutines with a start barrier makes the collision near-certain on
+//	the first run. The test runs multiple rounds to further increase
+//	confidence.
 //
 // Why refillRate = 0?
-//   With a non-zero refill rate, tokens regenerate continuously, which
-//   would obscure the race: extra allowed requests could be from
-//   legitimate refills rather than the bug. Setting refillRate to 0
-//   eliminates that variable entirely — every token that gets used was
-//   one of the original 5, period.
+//
+//	With a non-zero refill rate, tokens regenerate continuously, which
+//	would obscure the race: extra allowed requests could be from
+//	legitimate refills rather than the bug. Setting refillRate to 0
+//	eliminates that variable entirely — every token that gets used was
+//	one of the original 5, period.
 func TestRedisLimiter_RaceCondition(t *testing.T) {
 	client := testRedisClient(t)
 
 	const (
-		capacity    = 5.0
-		refillRate  = 0.0 // no refill — isolates the race from the refill logic
-		goroutines  = 200
-		rounds      = 5 // run multiple rounds; the race is probabilistic
-		tenantBase  = "race-test-tenant"
+		capacity   = 5.0
+		refillRate = 0.0 // no refill — isolates the race from the refill logic
+		goroutines = 200
+		rounds     = 5 // run multiple rounds; the race is probabilistic
+		tenantBase = "race-test-tenant"
 	)
 
 	raceTriggered := false
