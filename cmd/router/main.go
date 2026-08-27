@@ -113,7 +113,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	authMw := identity.Middleware()
+	// Day 12: Real JWT authentication secret.
+	// In production, this must be a securely rotated secret injected via env.
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "super-secret-local-dev-key"
+	}
+	
+	authMw := identity.Middleware(jwtSecret)
 	rateLimitMw := ratelimit.Middleware(limiter, func(r *http.Request) string {
 		return identity.FromContext(r.Context())
 	})
