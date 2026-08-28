@@ -19,13 +19,17 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"net"
 
+	"google.golang.org/grpc"
 	"github.com/redis/go-redis/v9"
 	"github/rebik/internal/identity"
 	"github/rebik/internal/middleware"
 	"github/rebik/internal/mockllm"
 	"github/rebik/internal/proxy"
 	"github/rebik/internal/ratelimit"
+	"github/rebik/internal/tenant"
+	pb "github/rebik/pkg/api/proto/router/v1"
 	"github/rebik/internal/usage"
 	"github/rebik/internal/workerpool"
 )
@@ -140,6 +144,23 @@ func main() {
 	pgPingCancel()
 	slog.Info("postgres: connected")
 
+	// Day 13: Internal gRPC API for tenant management
+	grpcListener, err := net.Listen("tcp", ":9092")
+	if err != nil {
+		slog.Error("router: failed to listen for gRPC", "error", err)
+		os.Exit(1)
+	}
+	grpcServer := grpc.NewServer()
+	tenantServer := tenant.NewGRPCServer(jwtSecret)
+	pb.RegisterTenantServiceServer(grpcServer, tenantServer)
+
+	go func() {
+		slog.Info("router: gRPC internal api listening", "addr", ":9092")
+		if err := grpcServer.Serve(grpcListener); err != nil {
+			slog.Error("router: gRPC server error", "error", err)
+		}
+	}()
+
 	proxySrv := &http.Server{
 		Addr:              proxyAddr,
 		Handler:           composedHandler,
@@ -166,6 +187,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	grpcServer.GracefulStop()
 	_ = proxySrv.Shutdown(ctx)
 	_ = mockSrv.Shutdown(ctx)
 	_ = redisClient.Close()
