@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package router.v1;
+
+option go_package = "github/rebik/pkg/api/router/v1";
+
+service TenantService {
+  // Create a new tenant and return their initial JWT token
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse) {}
+  
+  // Revoke a tenant (disables their ability to use tokens)
+  rpc RevokeTenant(RevokeTenantRequest) returns (RevokeTenantResponse) {}
+}
+
+message CreateTenantRequest {
+  string tenant_id = 1;
+}
+
+message CreateTenantResponse {
+  string jwt_token = 1;
+}
+
+message RevokeTenantRequest {
+  string tenant_id = 1;
+}
+
+message RevokeTenantResponse {
+  bool success = 1;
+}
