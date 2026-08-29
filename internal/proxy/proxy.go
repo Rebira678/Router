@@ -13,10 +13,12 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -101,43 +103,85 @@ func New(target Target, upstreamTimeout time.Duration) *Handler {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	// Day 3: derive a child context from r.Context() with our own
-	// deadline layered on top. Per the WithTimeout contract, this
-	// context's Done() fires at whichever comes first: our
-	// upstreamTimeout from now, OR the parent's own deadline/
-	// cancellation (e.g. the client disconnecting, or — from Day 2 —
-	// nothing currently sets a parent deadline, but nothing has to for
-	// this to be correct: WithTimeout still works fine against a parent
-	// with no deadline at all, it just means ours is the binding one).
-	//
-	// defer cancel() is not optional. WithTimeout starts an internal
-	// timer; if we never call cancel, that timer (and the small amount
-	// of state behind this context) leaks until it fires on its own.
-	// `go vet` will flag a WithTimeout/WithCancel whose cancel func is
-	// provably never called — that lint exists because this leak is a
-	// real, common bug, not a style nitpick.
 	ctx, cancel := context.WithTimeout(r.Context(), h.upstreamTimeout)
 	defer cancel()
 
-	outReq, err := h.buildUpstreamRequest(ctx, r)
-	if err != nil {
-		slog.Error("proxy: failed to build upstream request", "error", err)
-		http.Error(w, "bad gateway: could not construct upstream request", http.StatusBadGateway)
-		return
+	// Day 15: To support retries, we must buffer the request body so it can be 
+	// re-read on subsequent attempts. For LLM APIs (JSON payloads), this 
+	// is perfectly fine.
+	var bodyBytes []byte
+	if r.Body != nil {
+		bodyBytes, _ = io.ReadAll(r.Body)
+		r.Body.Close()
 	}
 
-	upstreamResp, err := h.client.Do(outReq)
+	var upstreamResp *http.Response
+	var err error
+
+	maxRetries := 3
+	backoff := 100 * time.Millisecond
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Rebuild the request for this attempt
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+		var outReq *http.Request
+		outReq, err = h.buildUpstreamRequest(ctx, r)
+		if err != nil {
+			slog.Error("proxy: failed to build upstream request", "error", err)
+			http.Error(w, "bad gateway: could not construct upstream request", http.StatusBadGateway)
+			return
+		}
+
+		upstreamResp, err = h.client.Do(outReq)
+
+		// If it's a successful response (or a normal 4xx error from the provider), we break and return it.
+		// We only retry on actual network errors (err != nil) or 5xx/429 status codes.
+		if err == nil && upstreamResp.StatusCode < 500 && upstreamResp.StatusCode != http.StatusTooManyRequests {
+			break
+		}
+
+		// If we are out of retries, stop trying.
+		if attempt == maxRetries {
+			break
+		}
+
+		statusCode := 0
+		if upstreamResp != nil {
+			statusCode = upstreamResp.StatusCode
+			upstreamResp.Body.Close()
+		}
+
+		// Calculate exponential backoff with jitter
+		// e.g. 100ms -> 200ms -> 400ms
+		sleepDuration := backoff
+		// Add up to 50% jitter to prevent thundering herds
+		jitter := time.Duration(rand.Float64() * float64(sleepDuration) * 0.5)
+		sleepDuration += jitter
+
+		slog.Warn("proxy: upstream call failed, retrying", 
+			"attempt", attempt+1, 
+			"sleep_ms", sleepDuration.Milliseconds(), 
+			"error", err,
+			"status_code", statusCode,
+		)
+
+		// Wait for the backoff duration, but respect the context deadline
+		select {
+		case <-ctx.Done():
+			err = ctx.Err() // deadline exceeded or canceled
+			goto EndRetries
+		case <-time.After(sleepDuration):
+			backoff *= 2 // Exponential increase for next time
+		}
+	}
+
+EndRetries:
+
 	if err != nil {
 		elapsed := time.Since(start)
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			// Our own upstreamTimeout fired. This is the case Day
-			// 3 exists to produce: a clean, fast, correctly-coded
-			// failure instead of an indefinite hang. 504 Gateway
-			// Timeout is the semantically correct status — it
-			// means "I'm a proxy/gateway, and the thing I was
-			// waiting on didn't respond in time," which is
-			// exactly what happened.
 			slog.Warn("proxy: upstream timed out",
 				"target", h.target.Name,
 				"timeout", h.upstreamTimeout,
@@ -146,23 +190,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "gateway timeout: upstream did not respond in time", http.StatusGatewayTimeout)
 
 		case errors.Is(err, context.Canceled):
-			// The *client* disconnected before we got a response —
-			// this fires when r.Context() (the parent) was
-			// canceled, which happens automatically when the
-			// client's TCP connection closes. There is no one left
-			// to send a response to, so we don't try. This is also
-			// why the log level is Info, not Error: a client
-			// hanging up is normal internet behavior, not a bug in
-			// Router.
 			slog.Info("proxy: client disconnected before upstream responded",
 				"target", h.target.Name,
 				"elapsed_ms", elapsed.Milliseconds(),
 			)
 
 		default:
-			// DNS failure, connection refused, TLS handshake
-			// failure — a genuine upstream/network problem, not a
-			// timeout or a cancellation.
 			slog.Error("proxy: upstream request failed",
 				"target", h.target.Name,
 				"error", err,
