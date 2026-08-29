@@ -221,3 +221,52 @@ Why build it this way?
 3. **Security (Port Isolation):** Because the back door is on a completely different street (Port `9092` instead of `8080`), our security team (DevOps) can configure the Firewall so that normal customers on the public internet can't even *see* the back door. 
 
 Now, when a user signs up on our dashboard, the dashboard uses this hyper-fast, highly secure back door to instantly mint their new JWT ID Card, keeping internal traffic completely separated from public proxy traffic!
+
+---
+
+## Day 14: The 2-Week Reflection (Load Testing the Gym)
+
+### 🧘‍♂️ The Scenario: Pausing to Reflect
+It's been two weeks since we opened the Gym (API Gateway). The front door (REST), the back door (gRPC), the ID Checkers (JWT), the Bouncers (Redis Rate Limiting), and the Accountants (PostgreSQL) are all hired and working together.
+
+Before we invite thousands of customers to use the gym simultaneously next week, we need to pause, look at the blueprints (Architecture), and ask ourselves: *What was the hardest part so far?*
+
+### 🧩 The Hardest Lesson: "The Ghost Customer"
+Surprisingly, the hardest part wasn't the ID checking or the database—it was dealing with **Ghost Customers** (Context Lifecycles). 
+Sometimes, a customer scans their ID, walks inside, finishes a workout, and immediately vanishes before the Accountant can hand them a receipt. If the system is naive, it cancels the receipt when the customer vanishes, meaning they got a free workout! We had to build a special mechanism (`contextWithoutCancel`) so the Accountant finishes writing the receipt to the database *even if* the customer disappears into thin air. 
+
+In distributed systems, handling edge cases where users drop connections is harder than writing the actual features!
+
+### 🔨 The Fix: The Stress Test (Load Testing)
+To truly review our 2-week progress, we built a **Load Tester** (`cmd/loadtester`). 
+Instead of walking through the door normally, we programmed a script to spawn 50 clones of the same user, all trying to barge through the front door at the exact same millisecond.
+
+**Why?**
+Because we *want* them to get blocked! We want to prove that the Bouncer (Redis Rate Limiter) doesn't get overwhelmed and successfully rejects the clones that exceed the limit. 
+This perfectly sets the stage for Week 3: **Reliability**. When a customer gets rejected, how do they politely wait and try again without trampling each other? (The Thundering Herd problem).
+
+---
+
+## Day 15: The Thundering Herd (Exponential Backoff & Jitter)
+
+### 🌩️ The Scenario: The Gym Equipment Breaks
+Our API Gateway sits in front of standard gym equipment (OpenAI, Anthropic). But what happens if the treadmill (OpenAI) suddenly loses power for a few seconds? 
+Before today, if a customer tried to use a broken machine, our system simply kicked them out of the gym with a `502 Bad Gateway` error. That’s a terrible user experience. 
+
+We needed our system to politely say, "Wait right here, let me check if it's working yet," and try again automatically behind the scenes.
+
+### 🐘 The Problem: The Thundering Herd
+The naive fix is to just tell every customer: "Try again in exactly 1 second."
+But imagine if OpenAI goes down and we have 5,000 customers in the gym at the same time.
+If we tell all 5,000 customers to try again in exactly 1 second, they will all wait exactly 1,000 milliseconds and sprint at the treadmill at the exact same moment. 
+This massive stampede is called a **Thundering Herd**. It acts like a massive Denial of Service (DDoS) attack, and it will permanently break the treadmill (or get our API key banned).
+
+### 🎲 The Fix: Jitter (Randomness)
+To fix this, we implemented **Exponential Backoff with Jitter**.
+Instead of everyone waiting exactly 1 second, the system adds a tiny bit of randomness (Jitter) to the wait time.
+- Customer A waits 1.1 seconds.
+- Customer B waits 1.4 seconds.
+- Customer C waits 0.9 seconds.
+
+By injecting randomness, the 5,000 customers are smoothly spread out over time. They calmly walk up to the machine one by one instead of stampeding. 
+If it still fails, the wait time doubles (Exponential Backoff: 1s -> 2s -> 4s), protecting our upstream providers from massive spikes while keeping our customers perfectly happy!
