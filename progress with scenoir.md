@@ -270,3 +270,23 @@ Instead of everyone waiting exactly 1 second, the system adds a tiny bit of rand
 
 By injecting randomness, the 5,000 customers are smoothly spread out over time. They calmly walk up to the machine one by one instead of stampeding. 
 If it still fails, the wait time doubles (Exponential Backoff: 1s -> 2s -> 4s), protecting our upstream providers from massive spikes while keeping our customers perfectly happy!
+
+---
+
+## Day 16: The Kitchen on Fire (The Circuit Breaker)
+
+### 🔥 The Scenario: The Burning Kitchen
+Yesterday we learned how to wait politely (Backoff & Jitter) when the gym equipment (or upstream API) temporarily glitches. But what if the equipment completely catches on fire? 
+Imagine you are at a restaurant, and the kitchen is literally on fire. You order a steak. The waiter walks to the kitchen, stands in the fire for 5 seconds, walks back out, and says, "Sorry, kitchen is broken." 
+Then another customer orders a salad. The waiter walks back into the fire for 5 seconds, walks back out, and says, "Sorry, broken." 
+
+Every single request is wasting 5 seconds of the server's time waiting to discover something we already know! This is what happens when thousands of API requests all independently hit a 5-second `Timeout` during a massive upstream outage.
+
+### 🛑 The Fix: The Circuit Breaker
+To fix this, we gave the waiter a **Circuit Breaker** state machine. 
+It works exactly like the electrical circuit breaker in your house:
+1. **Closed (Normal):** The waiter takes orders to the kitchen normally.
+2. **Open (The Kitchen is on Fire):** After the waiter fails 5 times in a row, they "trip" the circuit breaker open. For the next 10 seconds, if anyone tries to order food, the waiter rejects them *instantly* (in under 16 milliseconds!). The waiter never walks to the kitchen. This saves massive amounts of time and server resources.
+3. **Half-Open (Checking the Fire):** After 10 seconds, the waiter cautiously allows *exactly one* order to go to the kitchen. If it succeeds, the fire is out! The breaker snaps back to **Closed**. If it fails, the breaker trips back to **Open** for another 10 seconds.
+
+By instantly rejecting traffic during a known outage, the API Gateway protects itself from crashing under the weight of waiting for a dead upstream!

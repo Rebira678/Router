@@ -26,7 +26,9 @@ func Middleware(store *Store, model string) middleware.Middleware {
 			costMicros := int64(100) // $0.0001
 			occurredAt := time.Now()
 
-			err := store.Record(contextWithoutCancel(r.Context()), rawIdentity, model, tokensUsed, costMicros, occurredAt)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+			defer cancel()
+			err := store.Record(ctx, rawIdentity, model, tokensUsed, costMicros, occurredAt)
 			if err != nil {
 				slog.Error("usage: failed to record event", "error", err, "tenant_hash", identity.Hash(rawIdentity))
 			}
@@ -34,15 +36,4 @@ func Middleware(store *Store, model string) middleware.Middleware {
 	}
 }
 
-// contextWithoutCancel wraps the original context to prevent cancellation
-// from propagating when we need to do background work after the request is finished.
-type noCancelCtx struct {
-	context.Context
-}
 
-func (c noCancelCtx) Done() <-chan struct{} { return nil }
-func (c noCancelCtx) Err() error            { return nil }
-
-func contextWithoutCancel(ctx context.Context) context.Context {
-	return noCancelCtx{Context: ctx}
-}

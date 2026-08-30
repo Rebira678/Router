@@ -23,6 +23,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github/rebik/internal/circuitbreaker"
 )
 
 // hopByHopHeaders are headers that describe a *single transport hop*, not
@@ -72,14 +74,21 @@ type Handler struct {
 	// actually tune per-provider in production; the client Timeout is
 	// just "something is deeply wrong, abort no matter what."
 	upstreamTimeout time.Duration
+
+	// Day 16: one Breaker per Target. Requests check breaker.Allow()
+	// BEFORE calling upstream at all — that's the entire mechanism that
+	// makes an open breaker cheap: a rejected request never even reaches
+	// the network call it would otherwise wait out a timeout for.
+	breaker *circuitbreaker.Breaker
 }
 
 // New builds a Handler that forwards every request it receives to target,
 // aborting the upstream call if it takes longer than upstreamTimeout.
-func New(target Target, upstreamTimeout time.Duration) *Handler {
+func New(target Target, upstreamTimeout time.Duration, breakerFailureThreshold int, breakerCooldown time.Duration) *Handler {
 	return &Handler{
 		target:          target,
 		upstreamTimeout: upstreamTimeout,
+		breaker:         circuitbreaker.New(breakerFailureThreshold, breakerCooldown),
 		// A dedicated client (not http.DefaultClient) with its own
 		// Transport means Router controls connection pooling and
 		// timeouts independently of anything else in the process.
@@ -102,6 +111,18 @@ func New(target Target, upstreamTimeout time.Duration) *Handler {
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	// Day 16: the circuit breaker check happens FIRST, before building
+	// the outbound request or touching the network at all.
+	if !h.breaker.Allow() {
+		slog.Warn("proxy: circuit breaker open, rejecting without calling upstream",
+			"target", h.target.Name,
+			"state", h.breaker.State(),
+		)
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "circuit breaker open: upstream is currently unavailable", http.StatusServiceUnavailable)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), h.upstreamTimeout)
 	defer cancel()
@@ -182,10 +203,12 @@ EndRetries:
 		elapsed := time.Since(start)
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
+			h.breaker.RecordFailure()
 			slog.Warn("proxy: upstream timed out",
 				"target", h.target.Name,
 				"timeout", h.upstreamTimeout,
 				"elapsed_ms", elapsed.Milliseconds(),
+				"breaker_state", h.breaker.State(),
 			)
 			http.Error(w, "gateway timeout: upstream did not respond in time", http.StatusGatewayTimeout)
 
@@ -196,16 +219,20 @@ EndRetries:
 			)
 
 		default:
+			h.breaker.RecordFailure()
 			slog.Error("proxy: upstream request failed",
 				"target", h.target.Name,
 				"error", err,
 				"elapsed_ms", elapsed.Milliseconds(),
+				"breaker_state", h.breaker.State(),
 			)
 			http.Error(w, "bad gateway: upstream request failed", http.StatusBadGateway)
 		}
 		return
 	}
 	defer upstreamResp.Body.Close()
+
+	h.breaker.RecordSuccess()
 
 	h.writeDownstreamResponse(w, upstreamResp)
 

@@ -61,7 +61,7 @@ func main() {
 	proxyHandler := proxy.New(proxy.Target{
 		Name:    "mock-primary",
 		BaseURL: upstreamURL,
-	}, 5*time.Second) // Day 3: hard 5s ceiling on waiting for the upstream
+	}, 5*time.Second, 5, 10*time.Second) // Day 3: hard 5s ceiling, Day 16: threshold 5, cooldown 10s
 
 	// Day 2: wrap the proxy in a bounded worker pool instead of letting
 	// every accepted connection call upstream directly. 20 workers is an
