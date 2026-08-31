@@ -40,7 +40,7 @@ func main() {
 
 	const (
 		mockAddr  = ":9091"
-		proxyAddr = ":8080"
+		proxyAddr = ":8081"
 	)
 
 	mockSrv := mockllm.NewServer(mockAddr, "mock-primary", 0)
@@ -52,15 +52,36 @@ func main() {
 		}
 	}()
 
+	mockSecondaryAddr := ":9093"
+	mockSecondarySrv := mockllm.NewServer(mockSecondaryAddr, "mock-secondary", 0)
+	go func() {
+		slog.Info("mockllm: listening (secondary)", "addr", mockSecondaryAddr)
+		if err := mockSecondarySrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("mockllm: server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
 	upstreamURL, err := url.Parse("http://localhost" + mockAddr)
 	if err != nil {
 		slog.Error("router: invalid upstream URL", "error", err)
 		os.Exit(1)
 	}
+	upstreamSecondaryURL, err := url.Parse("http://localhost" + mockSecondaryAddr)
+	if err != nil {
+		slog.Error("router: invalid secondary upstream URL", "error", err)
+		os.Exit(1)
+	}
 
-	proxyHandler := proxy.New(proxy.Target{
-		Name:    "mock-primary",
-		BaseURL: upstreamURL,
+	proxyHandler := proxy.New([]proxy.Target{
+		{
+			Name:    "mock-primary",
+			BaseURL: upstreamURL,
+		},
+		{
+			Name:    "mock-secondary",
+			BaseURL: upstreamSecondaryURL,
+		},
 	}, 5*time.Second, 5, 10*time.Second) // Day 3: hard 5s ceiling, Day 16: threshold 5, cooldown 10s
 
 	// Day 2: wrap the proxy in a bounded worker pool instead of letting
@@ -190,6 +211,7 @@ func main() {
 	grpcServer.GracefulStop()
 	_ = proxySrv.Shutdown(ctx)
 	_ = mockSrv.Shutdown(ctx)
+	_ = mockSecondarySrv.Shutdown(ctx)
 	_ = redisClient.Close()
 	_ = usageStore.Close()
 }

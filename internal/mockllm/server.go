@@ -47,6 +47,7 @@ func NewServer(addr string, name string, artificialDelay time.Duration) *http.Se
 			"path", r.URL.Path,
 			"authorization_present", r.Header.Get("Authorization") != "",
 			"x_forwarded_for", r.Header.Get("X-Forwarded-For"),
+			"idempotency_key", r.Header.Get("Idempotency-Key"),
 		)
 
 		if artificialDelay > 0 {
