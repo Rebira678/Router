@@ -30,7 +30,7 @@ func Middleware(store *Store, model string) middleware.Middleware {
 			defer cancel()
 			err := store.Record(ctx, rawIdentity, model, tokensUsed, costMicros, occurredAt)
 			if err != nil {
-				slog.Error("usage: failed to record event", "error", err, "tenant_hash", identity.Hash(rawIdentity))
+				slog.ErrorContext(r.Context(), "usage: failed to record event", "error", err, "tenant_hash", identity.Hash(rawIdentity))
 			}
 		})
 	}

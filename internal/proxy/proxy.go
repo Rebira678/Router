@@ -92,11 +92,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	maxRetries := 3
-	
+
 	// Day 17: Failover loop. We try upstreams in order.
 	for upstreamIdx, u := range h.upstreams {
 		if !u.Breaker.Allow() {
-			slog.Warn("proxy: circuit breaker open, skipping upstream",
+			slog.WarnContext(r.Context(), "proxy: circuit breaker open, skipping upstream",
 				"target", u.Target.Name,
 				"state", u.Breaker.State(),
 			)
@@ -111,7 +111,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			var outReq *http.Request
 			outReq, err = h.buildUpstreamRequest(ctx, r, u.Target)
 			if err != nil {
-				slog.Error("proxy: failed to build upstream request", "error", err)
+				slog.ErrorContext(r.Context(), "proxy: failed to build upstream request", "error", err)
 				http.Error(w, "bad gateway: could not construct upstream request", http.StatusBadGateway)
 				return
 			}
@@ -138,10 +138,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			jitter := time.Duration(rand.Float64() * float64(sleepDuration) * 0.5)
 			sleepDuration += jitter
 
-			slog.Warn("proxy: upstream call failed, retrying", 
+			slog.WarnContext(r.Context(), "proxy: upstream call failed, retrying",
 				"target", u.Target.Name,
-				"attempt", attempt+1, 
-				"sleep_ms", sleepDuration.Milliseconds(), 
+				"attempt", attempt+1,
+				"sleep_ms", sleepDuration.Milliseconds(),
 				"error", err,
 				"status_code", statusCode,
 			)
@@ -162,7 +162,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case errors.Is(err, context.DeadlineExceeded):
 				u.Breaker.RecordFailure()
-				slog.Warn("proxy: upstream timed out",
+				slog.WarnContext(r.Context(), "proxy: upstream timed out",
 					"target", u.Target.Name,
 					"timeout", h.upstreamTimeout,
 					"elapsed_ms", elapsed.Milliseconds(),
@@ -170,7 +170,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				)
 
 			case errors.Is(err, context.Canceled):
-				slog.Info("proxy: client disconnected before upstream responded",
+				slog.InfoContext(r.Context(), "proxy: client disconnected before upstream responded",
 					"target", u.Target.Name,
 					"elapsed_ms", elapsed.Milliseconds(),
 				)
@@ -178,22 +178,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			default:
 				u.Breaker.RecordFailure()
-				slog.Error("proxy: upstream request failed",
+				slog.ErrorContext(r.Context(), "proxy: upstream request failed",
 					"target", u.Target.Name,
 					"error", err,
 					"elapsed_ms", elapsed.Milliseconds(),
 					"breaker_state", u.Breaker.State(),
 				)
 			}
-			
+
 			// Try the next upstream
-			continue 
+			continue
 		}
 
 		// Day 17 Fix: exhausted retries, but HTTP call "succeeded" with a 500/429.
 		if upstreamResp.StatusCode >= 500 || upstreamResp.StatusCode == http.StatusTooManyRequests {
 			u.Breaker.RecordFailure()
-			slog.Warn("proxy: upstream still failing after retries exhausted",
+			slog.WarnContext(r.Context(), "proxy: upstream still failing after retries exhausted",
 				"target", u.Target.Name,
 				"status", upstreamResp.StatusCode,
 				"breaker_state", u.Breaker.State(),
@@ -207,9 +207,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Success path! Forward it downstream.
 		defer upstreamResp.Body.Close()
-		h.writeDownstreamResponse(w, upstreamResp)
+		h.writeDownstreamResponse(r.Context(), w, upstreamResp)
 
-		slog.Info("proxy: request forwarded",
+		slog.InfoContext(r.Context(), "proxy: request forwarded",
 			"target", u.Target.Name,
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -221,7 +221,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If we got here, ALL upstreams failed (or their breakers were open)
-	slog.Error("proxy: all upstreams exhausted or circuit breakers open")
+	slog.ErrorContext(r.Context(), "proxy: all upstreams exhausted or circuit breakers open")
 	w.Header().Set("Retry-After", "5")
 	http.Error(w, "service unavailable: all upstreams failed or circuit breakers open", http.StatusServiceUnavailable)
 }
@@ -254,7 +254,7 @@ func (h *Handler) buildUpstreamRequest(ctx context.Context, r *http.Request, tar
 	return outReq, nil
 }
 
-func (h *Handler) writeDownstreamResponse(w http.ResponseWriter, upstreamResp *http.Response) {
+func (h *Handler) writeDownstreamResponse(ctx context.Context, w http.ResponseWriter, upstreamResp *http.Response) {
 	destHeader := w.Header()
 	for k, values := range upstreamResp.Header {
 		for _, v := range values {
@@ -275,19 +275,19 @@ func (h *Handler) writeDownstreamResponse(w http.ResponseWriter, upstreamResp *h
 	w.WriteHeader(upstreamResp.StatusCode)
 
 	if isEventStream {
-		h.streamSSE(w, upstreamResp.Body)
+		h.streamSSE(ctx, w, upstreamResp.Body)
 		return
 	}
 
 	if _, err := io.Copy(w, upstreamResp.Body); err != nil {
-		slog.Warn("proxy: error streaming response body to client", "error", err)
+		slog.WarnContext(ctx, "proxy: error streaming response body to client", "error", err)
 	}
 }
 
-func (h *Handler) streamSSE(w http.ResponseWriter, body io.Reader) {
+func (h *Handler) streamSSE(ctx context.Context, w http.ResponseWriter, body io.Reader) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		slog.Warn("proxy: ResponseWriter does not support Flusher; SSE response will not stream incrementally")
+		slog.WarnContext(ctx, "proxy: ResponseWriter does not support Flusher; SSE response will not stream incrementally")
 		_, _ = io.Copy(w, body)
 		return
 	}
@@ -297,14 +297,14 @@ func (h *Handler) streamSSE(w http.ResponseWriter, body io.Reader) {
 		n, readErr := body.Read(buf)
 		if n > 0 {
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				slog.Info("proxy: client disconnected mid-stream", "error", writeErr)
+				slog.InfoContext(ctx, "proxy: client disconnected mid-stream", "error", writeErr)
 				return
 			}
 			flusher.Flush()
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
-				slog.Warn("proxy: error reading SSE body from upstream", "error", readErr)
+				slog.WarnContext(ctx, "proxy: error reading SSE body from upstream", "error", readErr)
 			}
 			return
 		}

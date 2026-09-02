@@ -122,11 +122,11 @@ func (p *Pool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-j.done:
 		case <-r.Context().Done():
-			slog.Info("workerpool: client disconnected while request was queued/in-flight",
+			slog.InfoContext(r.Context(), "workerpool: client disconnected while request was queued/in-flight",
 				"path", r.URL.Path)
 		}
 	default:
-		slog.Warn("workerpool: queue full, rejecting request",
+		slog.WarnContext(r.Context(), "workerpool: queue full, rejecting request",
 			"path", r.URL.Path,
 			"workers", p.workers,
 			"queue_capacity", cap(p.jobs),

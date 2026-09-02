@@ -63,7 +63,7 @@ func Middleware(limiter Limiter, keyFn KeyFunc) middleware.Middleware {
 				//     because a side concern went down is not.
 				// This is genuinely debatable and depends on what you're
 				// protecting; naming the trade-off out loud is the point.
-				slog.Error("ratelimit: backend error, failing open", "error", err, "key_hash", hashIdentity(key))
+				slog.ErrorContext(r.Context(), "ratelimit: backend error, failing open", "error", err, "key_hash", hashIdentity(key))
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -72,7 +72,7 @@ func Middleware(limiter Limiter, keyFn KeyFunc) middleware.Middleware {
 				// Day 7 fix: log the hashed fingerprint, not the raw key —
 				// the raw key is a real Authorization header value, and it
 				// has no business sitting in plain text in application logs.
-				slog.Warn("ratelimit: request rejected, bucket empty", "key_hash", hashIdentity(key), "path", r.URL.Path)
+				slog.WarnContext(r.Context(), "ratelimit: request rejected, bucket empty", "key_hash", hashIdentity(key), "path", r.URL.Path)
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "rate limit exceeded for this API key", http.StatusTooManyRequests)
 				return

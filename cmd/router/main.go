@@ -21,22 +21,26 @@ import (
 	"time"
 	"net"
 
-	"google.golang.org/grpc"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+
 	"github/rebik/internal/identity"
+	"github/rebik/internal/logger"
 	"github/rebik/internal/middleware"
 	"github/rebik/internal/mockllm"
 	"github/rebik/internal/proxy"
 	"github/rebik/internal/ratelimit"
+	"github/rebik/internal/requestid"
 	"github/rebik/internal/tenant"
-	pb "github/rebik/pkg/api/proto/router/v1"
 	"github/rebik/internal/usage"
 	"github/rebik/internal/workerpool"
+	pb "github/rebik/pkg/api/proto/router/v1"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	baseHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	ctxLogger := slog.New(logger.NewContextHandler(baseHandler))
+	slog.SetDefault(ctxLogger)
 
 	const (
 		mockAddr  = ":9091"
@@ -151,7 +155,13 @@ func main() {
 	})
 	usageMw := usage.Middleware(usageStore, "mock-llm-v1")
 
-	composedHandler := middleware.Chain(boundedHandler, authMw, rateLimitMw, usageMw)
+	composedHandler := middleware.Chain(
+		boundedHandler,
+		requestid.Middleware, // executes first
+		authMw,
+		rateLimitMw,
+		usageMw,
+	)
 
 	pgPingCtx, pgPingCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := usageStore.Ping(pgPingCtx); err != nil {
