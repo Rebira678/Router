@@ -13,8 +13,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"strconv"
 
 	"github/rebik/internal/circuitbreaker"
+	"github/rebik/internal/telemetry"
 )
 
 var hopByHopHeaders = map[string]bool{
@@ -96,6 +98,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Day 17: Failover loop. We try upstreams in order.
 	for upstreamIdx, u := range h.upstreams {
 		if !u.Breaker.Allow() {
+			telemetry.UpstreamAttempts.WithLabelValues(u.Target.Name, "failed", "circuit_open").Inc()
 			slog.WarnContext(r.Context(), "proxy: circuit breaker open, skipping upstream",
 				"target", u.Target.Name,
 				"state", u.Breaker.State(),
@@ -116,7 +119,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			attemptStart := time.Now()
 			upstreamResp, err = h.client.Do(outReq)
+			telemetry.UpstreamDuration.WithLabelValues(u.Target.Name).Observe(time.Since(attemptStart).Seconds())
 
 			if err == nil && upstreamResp.StatusCode < 500 && upstreamResp.StatusCode != http.StatusTooManyRequests {
 				break // Success (or 4xx client error)
@@ -161,6 +166,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			elapsed := time.Since(start)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded):
+				telemetry.UpstreamAttempts.WithLabelValues(u.Target.Name, "failed", "timeout").Inc()
 				u.Breaker.RecordFailure()
 				slog.WarnContext(r.Context(), "proxy: upstream timed out",
 					"target", u.Target.Name,
@@ -170,6 +176,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				)
 
 			case errors.Is(err, context.Canceled):
+				telemetry.UpstreamAttempts.WithLabelValues(u.Target.Name, "failed", "client_disconnect").Inc()
 				slog.InfoContext(r.Context(), "proxy: client disconnected before upstream responded",
 					"target", u.Target.Name,
 					"elapsed_ms", elapsed.Milliseconds(),
@@ -177,6 +184,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return // If client disconnected, stop trying entirely
 
 			default:
+				telemetry.UpstreamAttempts.WithLabelValues(u.Target.Name, "failed", "network_error").Inc()
 				u.Breaker.RecordFailure()
 				slog.ErrorContext(r.Context(), "proxy: upstream request failed",
 					"target", u.Target.Name,
@@ -192,6 +200,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Day 17 Fix: exhausted retries, but HTTP call "succeeded" with a 500/429.
 		if upstreamResp.StatusCode >= 500 || upstreamResp.StatusCode == http.StatusTooManyRequests {
+			telemetry.UpstreamAttempts.WithLabelValues(u.Target.Name, strconv.Itoa(upstreamResp.StatusCode), "upstream_error").Inc()
 			u.Breaker.RecordFailure()
 			slog.WarnContext(r.Context(), "proxy: upstream still failing after retries exhausted",
 				"target", u.Target.Name,
@@ -202,6 +211,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			upstreamResp = nil
 			continue // Try the next upstream
 		} else {
+			telemetry.UpstreamAttempts.WithLabelValues(u.Target.Name, strconv.Itoa(upstreamResp.StatusCode), "success").Inc()
 			u.Breaker.RecordSuccess()
 		}
 

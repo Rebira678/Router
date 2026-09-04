@@ -21,6 +21,7 @@ import (
 	"time"
 	"net"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
@@ -31,6 +32,7 @@ import (
 	"github/rebik/internal/proxy"
 	"github/rebik/internal/ratelimit"
 	"github/rebik/internal/requestid"
+	"github/rebik/internal/telemetry"
 	"github/rebik/internal/tenant"
 	"github/rebik/internal/usage"
 	"github/rebik/internal/workerpool"
@@ -158,6 +160,7 @@ func main() {
 	composedHandler := middleware.Chain(
 		boundedHandler,
 		requestid.Middleware, // executes first
+		telemetry.Middleware, // records metrics for everything below it
 		authMw,
 		rateLimitMw,
 		usageMw,
@@ -203,6 +206,15 @@ func main() {
 		if err := proxySrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("router: server error", "error", err)
 			os.Exit(1)
+		}
+	}()
+
+	go func() {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		slog.Info("telemetry: metrics listening", "addr", ":9090")
+		if err := http.ListenAndServe(":9090", mux); err != nil {
+			slog.Error("telemetry: server error", "error", err)
 		}
 	}()
 
