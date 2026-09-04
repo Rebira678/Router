@@ -212,8 +212,8 @@ func main() {
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
-		slog.Info("telemetry: metrics listening", "addr", ":9090")
-		if err := http.ListenAndServe(":9090", mux); err != nil {
+		slog.Info("telemetry: metrics listening", "addr", ":9095")
+		if err := http.ListenAndServe(":9095", mux); err != nil {
 			slog.Error("telemetry: server error", "error", err)
 		}
 	}()
