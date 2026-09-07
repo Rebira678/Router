@@ -1,0 +1,11 @@
+.git
+*.md
+DAY*.md
+assets/
+deploy/
+migrations/
+proto/
+*.png
+router
+*.env
+.env*

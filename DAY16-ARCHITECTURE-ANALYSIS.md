@@ -4,6 +4,8 @@ This document provides an expert-level technical breakdown of the Router system 
 
 ## 1. High-Level System Architecture
 
+![Conceptual 3D Architecture of the AI Gateway](assets/architecture.png)
+
 The Router operates as a high-performance, fault-tolerant middleware layer between client applications and external LLM providers (e.g., OpenAI, Anthropic). 
 
 ```mermaid

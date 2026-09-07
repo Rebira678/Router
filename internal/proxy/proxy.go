@@ -11,9 +11,9 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 
 	"github/rebik/internal/circuitbreaker"
 	"github/rebik/internal/telemetry"
@@ -139,7 +139,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			sleepDuration := backoff
-			// Day 17 Nitpick fix: check Retry-After header. (Omitted for brevity if not present)
 			jitter := time.Duration(rand.Float64() * float64(sleepDuration) * 0.5)
 			sleepDuration += jitter
 
@@ -285,7 +284,7 @@ func (h *Handler) writeDownstreamResponse(ctx context.Context, w http.ResponseWr
 	w.WriteHeader(upstreamResp.StatusCode)
 
 	if isEventStream {
-		h.streamSSE(ctx, w, upstreamResp.Body)
+		h.streamSSE(w, upstreamResp.Body)
 		return
 	}
 
@@ -294,27 +293,45 @@ func (h *Handler) writeDownstreamResponse(ctx context.Context, w http.ResponseWr
 	}
 }
 
-func (h *Handler) streamSSE(ctx context.Context, w http.ResponseWriter, body io.Reader) {
+func (h *Handler) streamSSE(w http.ResponseWriter, body io.Reader) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		slog.WarnContext(ctx, "proxy: ResponseWriter does not support Flusher; SSE response will not stream incrementally")
+		slog.Warn("proxy: ResponseWriter does not support Flusher; SSE response will not stream incrementally")
 		_, _ = io.Copy(w, body)
 		return
 	}
+
+	stop := make(chan struct{})
+	defer close(stop) // Guarantees stop is closed on any exit path (client disconnect or EOF)
+
+	tokenCount := 0
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				slog.Info("proxy: sse stream heartbeat", "tokens_sent_so_far", tokenCount)
+			case <-stop:
+				return
+			}
+		}
+	}()
 
 	buf := make([]byte, 512)
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
+			tokenCount++
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				slog.InfoContext(ctx, "proxy: client disconnected mid-stream", "error", writeErr)
-				return
+				slog.Info("proxy: client disconnected mid-stream", "error", writeErr)
+				return // defer close(stop) cleans up the ticker goroutine here
 			}
 			flusher.Flush()
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
-				slog.WarnContext(ctx, "proxy: error reading SSE body from upstream", "error", readErr)
+				slog.Warn("proxy: error reading SSE body from upstream", "error", readErr)
 			}
 			return
 		}

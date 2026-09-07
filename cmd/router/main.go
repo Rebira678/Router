@@ -13,13 +13,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
-	"net"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
@@ -150,7 +151,7 @@ func main() {
 	if jwtSecret == "" {
 		jwtSecret = "super-secret-local-dev-key"
 	}
-	
+
 	authMw := identity.Middleware(jwtSecret)
 	rateLimitMw := ratelimit.Middleware(limiter, func(r *http.Request) string {
 		return identity.FromContext(r.Context())
@@ -212,7 +213,15 @@ func main() {
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
-		slog.Info("telemetry: metrics listening", "addr", ":9095")
+
+		// Register pprof handlers on the isolated telemetry port
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+		slog.Info("telemetry: metrics + pprof listening", "addr", ":9095")
 		if err := http.ListenAndServe(":9095", mux); err != nil {
 			slog.Error("telemetry: server error", "error", err)
 		}
