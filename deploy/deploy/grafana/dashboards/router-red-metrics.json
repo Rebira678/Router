@@ -1,0 +1,241 @@
+{
+    "title": "Router — RED Metrics",
+    "uid": "router-red-metrics",
+    "schemaVersion": 39,
+    "version": 2,
+    "timezone": "browser",
+    "editable": true,
+    "time": {
+        "from": "now-15m",
+        "to": "now"
+    },
+    "refresh": "5s",
+    "panels": [
+        {
+            "id": 1,
+            "type": "gauge",
+            "title": "Active in-flight requests",
+            "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 0,
+                "y": 0
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "min": 0,
+                    "max": 50,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": 0
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 20
+                            },
+                            {
+                                "color": "red",
+                                "value": 40
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "router_active_requests",
+                    "legendFormat": "in-flight"
+                }
+            ]
+        },
+        {
+            "id": 2,
+            "type": "timeseries",
+            "title": "Request rate (RPS) — inbound",
+            "gridPos": {
+                "h": 8,
+                "w": 9,
+                "x": 6,
+                "y": 0
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(router_request_duration_seconds_count[1m]))",
+                    "legendFormat": "requests/sec"
+                }
+            ]
+        },
+        {
+            "id": 3,
+            "type": "timeseries",
+            "title": "Upstream attempt rate (RPS)",
+            "gridPos": {
+                "h": 8,
+                "w": 9,
+                "x": 15,
+                "y": 0
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(router_upstream_attempts_total[1m]))",
+                    "legendFormat": "attempts/sec"
+                }
+            ],
+            "description": "Includes retries and failover attempts."
+        },
+        {
+            "id": 4,
+            "type": "timeseries",
+            "title": "End-to-end request duration (p50 / p95 / p99)",
+            "gridPos": {
+                "h": 9,
+                "w": 12,
+                "x": 0,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.50, sum(rate(router_request_duration_seconds_bucket[5m])) by (le))",
+                    "legendFormat": "p50"
+                },
+                {
+                    "expr": "histogram_quantile(0.95, sum(rate(router_request_duration_seconds_bucket[5m])) by (le))",
+                    "legendFormat": "p95"
+                },
+                {
+                    "expr": "histogram_quantile(0.99, sum(rate(router_request_duration_seconds_bucket[5m])) by (le))",
+                    "legendFormat": "p99"
+                }
+            ]
+        },
+        {
+            "id": 5,
+            "type": "timeseries",
+            "title": "Upstream network hop latency (p95), by target",
+            "gridPos": {
+                "h": 9,
+                "w": 12,
+                "x": 12,
+                "y": 8
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "histogram_quantile(0.95, sum(rate(router_upstream_duration_seconds_bucket[5m])) by (le, target))",
+                    "legendFormat": "{{target}} p95"
+                }
+            ]
+        },
+        {
+            "id": 6,
+            "type": "timeseries",
+            "title": "Upstream attempts by target / outcome",
+            "gridPos": {
+                "h": 9,
+                "w": 12,
+                "x": 0,
+                "y": 17
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "reqps"
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum by (target, status, reason) (rate(router_upstream_attempts_total[1m]))",
+                    "legendFormat": "{{target}} · {{status}} · {{reason}}"
+                }
+            ]
+        },
+        {
+            "id": 7,
+            "type": "timeseries",
+            "title": "Client-facing error rate % (5xx)",
+            "gridPos": {
+                "h": 9,
+                "w": 12,
+                "x": 12,
+                "y": 17
+            },
+            "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "percentunit",
+                    "max": 1,
+                    "min": 0,
+                    "thresholds": {
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": 0
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 0.01
+                            },
+                            {
+                                "color": "red",
+                                "value": 0.05
+                            }
+                        ]
+                    }
+                }
+            },
+            "targets": [
+                {
+                    "expr": "sum(rate(router_request_duration_seconds_count{status=~\"5..\"}[5m])) / sum(rate(router_request_duration_seconds_count[5m]))",
+                    "legendFormat": "5xx error rate"
+                }
+            ]
+        }
+    ]
+}
