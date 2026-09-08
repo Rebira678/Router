@@ -61,7 +61,7 @@ services:
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "9096:9090"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
     depends_on:
