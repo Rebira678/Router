@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. External Dependencies
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: router-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: router-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: router
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d router"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 2. The AI Gateway Router
+  # ----------------------------------------------------------------------------
+  router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: router-app
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - REDIS_ADDR=redis:6379
+      - POSTGRES_DSN=postgres://postgres:postgres@postgres:5432/router?sslmode=disable
+      - JWT_SECRET=super-secret-local-dev-key
+    ports:
+      - "8081:8081" # Public Proxy
+      - "9092:9092" # Internal gRPC (Tenant API)
+      - "9095:9095" # Internal Telemetry (Prometheus metrics)
+
+  # ----------------------------------------------------------------------------
+  # 3. Observability Stack
+  # ----------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: router-prometheus
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    depends_on:
+      - router
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: router-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+    volumes:
+      # Use the new folder we created to avoid permission issues
+      - ./deploy/grafana-new/provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./deploy/grafana-new/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./deploy/grafana-new/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus

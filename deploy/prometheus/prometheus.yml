@@ -1,10 +1,12 @@
 global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
+  scrape_interval: 10s
+  evaluation_interval: 10s
 
 scrape_configs:
   - job_name: "router"
+    # Inside docker-compose, containers resolve each other by service name.
+    # The router exposes metrics on :9095 inside the container.
     static_configs:
-      - targets: ["host.docker.internal:9095"]
+      - targets: ["router:9095"]
         labels:
-          service: "router"
+          service: "ai-gateway"
