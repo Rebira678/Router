@@ -62,11 +62,14 @@ func New(targets []Target, upstreamTimeout time.Duration, breakerFailureThreshol
 		upstreams:       upstreams,
 		upstreamTimeout: upstreamTimeout,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			// Day 28 Fix: Do not set client.Timeout because it kills SSE streams.
+			// Use ResponseHeaderTimeout instead to only timeout if the upstream hangs
+			// before sending headers!
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 100,
-				IdleConnTimeout:     90 * time.Second,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   100,
+				IdleConnTimeout:       90 * time.Second,
+				ResponseHeaderTimeout: upstreamTimeout,
 			},
 		},
 	}
@@ -75,7 +78,11 @@ func New(targets []Target, upstreamTimeout time.Duration, breakerFailureThreshol
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	ctx, cancel := context.WithTimeout(r.Context(), h.upstreamTimeout)
+	// Day 28 Fix: We cannot apply `h.upstreamTimeout` to the ENTIRE proxy request,
+	// otherwise if the first upstream takes 5 seconds and times out, the context is dead,
+	// and the failover attempt instantly fails! We give the overall request a generous
+	// ceiling, and apply `h.upstreamTimeout` per attempt below.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	// Day 18: Idempotency keys. If the client didn't send one, generate one
@@ -163,8 +170,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			elapsed := time.Since(start)
+			
+			var isTimeout bool
+			if errors.Is(err, context.DeadlineExceeded) {
+				isTimeout = true
+			} else if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
+				isTimeout = true
+			}
+
 			switch {
-			case errors.Is(err, context.DeadlineExceeded):
+			case isTimeout:
 				telemetry.UpstreamAttempts.WithLabelValues(u.Target.Name, "failed", "timeout").Inc()
 				u.Breaker.RecordFailure()
 				slog.WarnContext(r.Context(), "proxy: upstream timed out",
