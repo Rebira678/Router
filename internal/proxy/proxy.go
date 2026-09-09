@@ -174,8 +174,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			var isTimeout bool
 			if errors.Is(err, context.DeadlineExceeded) {
 				isTimeout = true
-			} else if netErr, ok := err.(interface{ Timeout() bool }); ok && netErr.Timeout() {
-				isTimeout = true
+			} else {
+				var netErr interface{ Timeout() bool }
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					isTimeout = true
+				}
 			}
 
 			switch {
