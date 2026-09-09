@@ -162,6 +162,46 @@ export default function App() {
     }
   };
 
+  const handleSpam = async () => {
+    if (!token) return;
+    
+    // Fire 15 requests instantly in parallel to guarantee we hit the Rate Limiter (Capacity: 10)
+    const promises = Array.from({ length: 15 }).map(async (_, i) => {
+      const startTime = performance.now();
+      try {
+        const response = await fetch('http://localhost:8081/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            model: 'mock-llm-v1',
+            messages: [{ role: 'user', content: `Spam message ${i}` }],
+          }),
+        });
+        
+        const endTime = performance.now();
+        const exposedHeaders: Record<string, string> = {};
+        response.headers.forEach((val, key) => { exposedHeaders[key] = val; });
+
+        setLogs((prev) => [...prev, {
+          id: crypto.randomUUID(),
+          timestamp: new Date(),
+          method: 'POST',
+          url: '/v1/chat/completions',
+          status: response.status,
+          latencyMs: Math.round(endTime - startTime),
+          headers: exposedHeaders,
+        }]);
+      } catch (err) {
+        // ignore network errors for spam test
+      }
+    });
+
+    await Promise.all(promises);
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col font-sans text-neutral-200">
       
@@ -226,16 +266,26 @@ export default function App() {
           <div className="p-4 border-b border-neutral-800/60 bg-[#111] flex items-center justify-between">
             <h2 className="text-sm font-semibold text-neutral-200">Chat Application</h2>
             
-            <button 
-              onClick={() => setSimulateFailure(!simulateFailure)}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
-                simulateFailure ? "bg-rose-950/40 text-rose-400 border border-rose-900/50" : "bg-neutral-900 hover:bg-neutral-800 text-neutral-400 border border-neutral-800"
-              )}
-            >
-              {simulateFailure ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
-              Simulate Upstream Failure
-            </button>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={handleSpam}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium bg-neutral-900 hover:bg-neutral-800 text-amber-500 border border-amber-900/50 transition-all"
+              >
+                <Zap className="w-4 h-4" />
+                Spam Requests (Test 429)
+              </button>
+
+              <button 
+                onClick={() => setSimulateFailure(!simulateFailure)}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all",
+                  simulateFailure ? "bg-rose-950/40 text-rose-400 border border-rose-900/50" : "bg-neutral-900 hover:bg-neutral-800 text-neutral-400 border border-neutral-800"
+                )}
+              >
+                {simulateFailure ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                Simulate Upstream Failure
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
