@@ -26,6 +26,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
+	"github/rebik/internal/cors"
 	"github/rebik/internal/identity"
 	"github/rebik/internal/logger"
 	"github/rebik/internal/middleware"
@@ -160,6 +161,7 @@ func main() {
 
 	composedHandler := middleware.Chain(
 		boundedHandler,
+		cors.Middleware,      // handles CORS preflights before anything else
 		requestid.Middleware, // executes first
 		telemetry.Middleware, // records metrics for everything below it
 		authMw,
