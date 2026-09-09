@@ -130,10 +130,14 @@ export default function App() {
         const data = await response.json();
         setLogs((prev) => [...prev, log]);
         
+        const content = typeof data.choices?.[0]?.message === 'string' 
+          ? data.choices[0].message 
+          : (data.choices?.[0]?.message?.content || 'No response');
+
         const assistantMessage: Message = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: data.choices?.[0]?.message?.content || 'No response',
+          content: content,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, assistantMessage]);
