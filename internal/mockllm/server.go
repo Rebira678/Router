@@ -56,9 +56,10 @@ func NewServer(addr string, name string, artificialDelay time.Duration) *http.Se
 
 		// Day 3: let a single request override the delay via header,
 		// e.g. `-H "X-Mock-Delay-Ms: 8000"`, without restarting the
-		// server. This is what lets you demo "hang vs. timeout" on
-		// demand instead of only at server-startup-configured delays.
-		if v := r.Header.Get("X-Mock-Delay-Ms"); v != "" {
+		// on demand instead of only at server-startup-configured delays.
+		// For our failover UI demo, we only apply this delay to the primary upstream.
+		// If we delayed both, the router would exhaust all retries and return 503.
+		if v := r.Header.Get("X-Mock-Delay-Ms"); v != "" && name == "mock-primary" {
 			if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
 				// A real upstream doesn't know or care whether
 				// Router gave up on it — but it's worth
