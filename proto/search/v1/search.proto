@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package search.v1;
+
+option go_package = "github/rebik/pkg/api/search/v1;searchv1";
+
+service SearchService {
+    rpc Search(SearchRequest) returns (SearchResponse);
+}
+
+message SearchRequest {
+    string query = 1;
+    int32 top_k = 2;
+}
+
+message SearchResponse {
+    repeated SearchResult results = 1;
+}
+
+message SearchResult {
+    string document_id = 1;
+    int32 chunk_index = 2;
+    string chunk_text = 3;
+    float score = 4;
+}
