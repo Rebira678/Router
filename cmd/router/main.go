@@ -34,6 +34,7 @@ import (
 	"github/rebik/internal/proxy"
 	"github/rebik/internal/ratelimit"
 	"github/rebik/internal/requestid"
+	"github/rebik/internal/retriever"
 	"github/rebik/internal/telemetry"
 	"github/rebik/internal/tenant"
 	"github/rebik/internal/usage"
@@ -159,8 +160,36 @@ func main() {
 	})
 	usageMw := usage.Middleware(usageStore, "mock-llm-v1")
 
+	// ─── Retriever RAG Integration ────────────────────────────────────────
+	// Connect to the Retriever backend's gRPC SearchService.
+	// If Retriever is not running, the Router still starts — /v1/search will
+	// return 502 but all LLM proxy routes remain fully functional.
+	retrieverAddr := os.Getenv("RETRIEVER_ADDR")
+	if retrieverAddr == "" {
+		retrieverAddr = "localhost:50051"
+	}
+	retrieverClient, err := retriever.NewClient(retrieverAddr)
+	if err != nil {
+		slog.Warn("router: retriever connection failed, /v1/search will be unavailable",
+			"addr", retrieverAddr,
+			"error", err,
+		)
+		// Non-fatal: Router can still serve LLM proxy requests
+	} else {
+		slog.Info("router: retriever RAG pipeline connected", "addr", retrieverAddr)
+	}
+
+	// ─── Path-Based Smart Routing ─────────────────────────────────────────
+	// /v1/search  → Retriever RAG pipeline (gRPC)
+	// /*          → LLM Proxy (HTTP reverse proxy with failover)
+	routerMux := http.NewServeMux()
+	if retrieverClient != nil {
+		routerMux.HandleFunc("/v1/search", retriever.Handler(retrieverClient))
+	}
+	routerMux.Handle("/", boundedHandler) // Default: LLM proxy
+
 	composedHandler := middleware.Chain(
-		boundedHandler,
+		routerMux,
 		cors.Middleware,      // handles CORS preflights before anything else
 		requestid.Middleware, // executes first
 		telemetry.Middleware, // records metrics for everything below it
@@ -247,4 +276,7 @@ func main() {
 	_ = mockSecondarySrv.Shutdown(ctx)
 	_ = redisClient.Close()
 	_ = usageStore.Close()
+	if retrieverClient != nil {
+		_ = retrieverClient.Close()
+	}
 }
